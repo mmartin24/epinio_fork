@@ -43,7 +43,7 @@ env:
 
 jobs:
   linter:
-    runs-on: self-hosted
+    runs-on: epinio-fork-runner-01
 
     steps:
       - name: Checkout
