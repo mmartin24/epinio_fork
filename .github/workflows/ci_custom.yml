@@ -12,21 +12,29 @@
 name: CI custom
 
 on:
-  push:
-    branches: [ main ]
-    paths-ignore:
-    - 'docs/**'
-    - 'README.md'
-    - '.goreleaser.yml'
-  pull_request:
-    branches: [ main ]
-    paths-ignore:
-    - 'docs/**'
-    - 'README.md'
-    - '.goreleaser.yml'
-  # nightly
-  schedule:
-    - cron:  '0 0 * * *'
+  workflow_dispatch:
+    # Variables to set when calling this reusable workflow
+      inputs:
+        k3s_version:
+          description: k3s version
+          required: true
+          type: string
+          default: v1.24.6+k3s1
+  # push:
+  #   branches: [ main ]
+  #   paths-ignore:
+  #   - 'docs/**'
+  #   - 'README.md'
+  #   - '.goreleaser.yml'
+  # pull_request:
+  #   branches: [ main ]
+  #   paths-ignore:
+  #   - 'docs/**'
+  #   - 'README.md'
+  #   - '.goreleaser.yml'
+  # # nightly
+  # schedule:
+  #   - cron:  '0 0 * * *'
 
 env:
   SETUP_GO_VERSION: '^1.18'
