@@ -9,9 +9,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Application contains the API handlers to manage applications. Except for app environment.
-package application
+package models_test
 
-// Controller represents all functionality of the API related to applications
-type Controller struct {
+import (
+	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+func TestEpinio(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Models unit test suite")
 }

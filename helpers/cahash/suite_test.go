@@ -9,9 +9,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Configurationbinding contains the API handlers to manage configuration bindings.
-package configurationbinding
+package cahash
 
-// Controller represents all functionality of the API related to configuration bindings
-type Controller struct {
+import (
+	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+func TestEpinio(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "CA hash suite")
 }

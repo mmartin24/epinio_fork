@@ -33,7 +33,7 @@ const (
 // Deploy handles the API endpoint /namespaces/:namespace/applications/:app/deploy
 // It uses an application chart to create the deployment, configuration and ingress (kube)
 // resources for the app.
-func (hc Controller) Deploy(c *gin.Context) apierror.APIErrors {
+func Deploy(c *gin.Context) apierror.APIErrors {
 	ctx := c.Request.Context()
 
 	namespace := c.Param("namespace")
@@ -50,6 +50,14 @@ func (hc Controller) Deploy(c *gin.Context) apierror.APIErrors {
 	}
 	if namespace != req.App.Namespace {
 		return apierror.NewBadRequestError("namespace parameter from URL does not match namespace param in body")
+	}
+
+	// validate provider reference, if actually present (git origin, and specified)
+	if req.Origin.Git != nil && req.Origin.Git.Provider != "" {
+		_, err := models.GitProviderFromString(string(req.Origin.Git.Provider))
+		if err != nil {
+			return apierror.NewBadRequestErrorf("bad git provider `%s`", req.Origin.Git.Provider)
+		}
 	}
 
 	cluster, err := kubernetes.GetCluster(ctx)

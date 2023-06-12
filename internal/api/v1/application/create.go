@@ -27,11 +27,12 @@ import (
 	"github.com/gin-gonic/gin"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Create handles the API endpoint POST /namespaces/:namespace/applications
 // It creates a new and empty application. I.e. without a workload.
-func (hc Controller) Create(c *gin.Context) apierror.APIErrors {
+func Create(c *gin.Context) apierror.APIErrors {
 	ctx := c.Request.Context()
 	namespace := c.Param("namespace")
 	username := requestctx.User(ctx).Username
@@ -45,6 +46,11 @@ func (hc Controller) Create(c *gin.Context) apierror.APIErrors {
 	err = c.BindJSON(&createRequest)
 	if err != nil {
 		return apierror.NewBadRequestError(err.Error())
+	}
+
+	errorMsgs := validation.IsDNS1123Subdomain(createRequest.Name)
+	if len(errorMsgs) > 0 {
+		return apierror.NewBadRequestErrorf("Application's name must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character (e.g. 'my-name', or '123-abc').")
 	}
 
 	appRef := models.NewAppRef(createRequest.Name, namespace)

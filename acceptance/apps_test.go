@@ -35,6 +35,8 @@ import (
 	"github.com/epinio/epinio/internal/api/v1/application"
 	"github.com/epinio/epinio/internal/names"
 	"github.com/epinio/epinio/internal/routes"
+	"github.com/epinio/epinio/pkg/api/core/v1/models"
+	"gopkg.in/yaml.v2"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -50,6 +52,7 @@ var _ = Describe("Apps", LApplication, func() {
 		appName   string
 	)
 	containerImageURL := "splatform/sample-app"
+	wordpress := "https://github.com/epinio/example-wordpress"
 
 	BeforeEach(func() {
 		namespace = catalog.NewNamespaceName()
@@ -62,6 +65,13 @@ var _ = Describe("Apps", LApplication, func() {
 		env.DeleteNamespace(namespace)
 	})
 
+	Describe("application create failures", func() {
+		It("rejects names not fitting kubernetes requirements", func() {
+			out, err := env.Epinio("", "app", "create", "BOGUS")
+			Expect(err).To(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("name must consist of lower case alphanumeric"))
+		})
+	})
 	When("creating an application without a workload", func() {
 		AfterEach(func() {
 			// MakeApp... by each test (It)
@@ -146,18 +156,24 @@ var _ = Describe("Apps", LApplication, func() {
 					manifest, err := os.ReadFile(destinationPath)
 					Expect(err).ToNot(HaveOccurred(), destinationPath)
 
-					Expect(string(manifest)).To(MatchRegexp(fmt.Sprintf(`name: %s
-configuration:
-  instances: 2
-  configurations:
-  - %s
-  environment:
-    CREDO: up
-    DOGMA: "no"
-  routes:
-  - %s\..*
-  appchart: standard
-`, appName, configurationName, appName)))
+					theManifest := models.ApplicationManifest{}
+					err = yaml.Unmarshal(manifest, &theManifest)
+					Expect(err).ToNot(HaveOccurred(), string(manifest))
+
+					// Note: Cannot use MatchYaml because of the `HavePrefix` check on the route.
+					// The MatchYAML asserts equality and we do not have the full route name here to put in.
+					Expect(theManifest.Name).To(Equal(appName))
+					var i int32 = 2
+					Expect(theManifest.Configuration.Instances).To(Equal(&i))
+					Expect(theManifest.Configuration.Configurations).To(HaveLen(1))
+					Expect(theManifest.Configuration.Routes).To(HaveLen(1))
+					Expect(theManifest.Configuration.Configurations[0]).To(Equal(configurationName))
+					Expect(theManifest.Configuration.Routes[0]).To(HavePrefix(appName))
+					Expect(theManifest.Configuration.Environment).To(HaveLen(2))
+					Expect(theManifest.Configuration.Environment).To(HaveKeyWithValue("CREDO", "up"))
+					Expect(theManifest.Configuration.Environment).To(HaveKeyWithValue("DOGMA", "no"))
+					Expect(theManifest.Configuration.AppChart).To(Equal("standard"))
+					Expect(theManifest.Namespace).To(Equal(namespace))
 				})
 			})
 		})
@@ -188,9 +204,39 @@ configuration:
 		})
 	})
 
+	When("pushing an app", func() {
+		It("rejects mixed origins", func() {
+			out, err := env.Epinio("", "push",
+				"--name", appName,
+				"--git", wordpress,
+				"--container-image-url", containerImageURL)
+			Expect(err).To(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("Cannot use `--path`, `--git`, and `--container-image-url` options together"))
+		})
+	})
+
 	When("pushing an app from an external repository", func() {
+		It("rejects a bad provider specification", func() {
+			out, err := env.Epinio("", "push",
+				"--name", appName,
+				"--git", wordpress,
+				"--git-provider", "bogus")
+			Expect(err).To(HaveOccurred(), out)
+
+			Expect(out).To(ContainSubstring("Bad --git-provider `bogus`"))
+		})
+
+		It("rejects a bad specification", func() {
+			out, err := env.Epinio("", "push",
+				"--name", appName,
+				"--git", wordpress+",main,borken")
+			Expect(err).To(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("Bad --git reference git `" +
+				wordpress +
+				",main,borken`, expected `repo?,rev?` as value"))
+		})
+
 		It("pushes the app successfully (repository alone)", func() {
-			wordpress := "https://github.com/epinio/example-wordpress"
 			pushLog, err := env.EpinioPush("",
 				appName,
 				"--name", appName,
@@ -216,7 +262,6 @@ configuration:
 		})
 
 		It("pushes the app successfully (repository + branch name)", func() {
-			wordpress := "https://github.com/epinio/example-wordpress"
 			pushLog, err := env.EpinioPush("",
 				appName,
 				"--name", appName,
@@ -242,7 +287,6 @@ configuration:
 		})
 
 		It("pushes the app successfully (repository + commit id)", func() {
-			wordpress := "https://github.com/epinio/example-wordpress"
 			pushLog, err := env.EpinioPush("",
 				appName,
 				"--name", appName,
@@ -269,7 +313,6 @@ configuration:
 
 		Describe("update", func() {
 			BeforeEach(func() {
-				wordpress := "https://github.com/epinio/example-wordpress"
 				pushLog, err := env.EpinioPush("",
 					appName,
 					"--name", appName,
@@ -433,15 +476,48 @@ configuration:
 	})
 
 	Describe("restage", func() {
-		When("restaging an existing app", func() {
-			It("will be staged again", func() {
+		When("restaging an existing and running app", func() {
+			BeforeEach(func() {
 				env.MakeApp(appName, 1, false)
-
+			})
+			AfterEach(func() {
+				env.DeleteApp(appName)
+			})
+			It("will be staged again, and restarted", func() {
 				restageLogs, err := env.Epinio("", "app", "restage", appName)
 				Expect(err).ToNot(HaveOccurred(), restageLogs)
+				Expect(restageLogs).To(ContainSubstring("Restaging and restarting application"))
+				Expect(restageLogs).To(ContainSubstring("Restarting application"))
+			})
+		})
 
-				By("deleting the app")
+		When("restaging an existing and inactive app", func() {
+			BeforeEach(func() {
+				env.MakeApp(appName, 0, false)
+			})
+			AfterEach(func() {
 				env.DeleteApp(appName)
+			})
+			It("will be staged again, and NOT restarted", func() {
+				restageLogs, err := env.Epinio("", "app", "restage", appName)
+				Expect(err).ToNot(HaveOccurred(), restageLogs)
+				Expect(restageLogs).To(ContainSubstring("Restaging application"))
+				Expect(restageLogs).ToNot(ContainSubstring("Restarting application"))
+			})
+		})
+
+		When("restaging an existing and running app, with restart suppressed", func() {
+			BeforeEach(func() {
+				env.MakeApp(appName, 1, false)
+			})
+			AfterEach(func() {
+				env.DeleteApp(appName)
+			})
+			It("will be staged again, and NOT restarted", func() {
+				restageLogs, err := env.Epinio("", "app", "restage", "--no-restart", appName)
+				Expect(err).ToNot(HaveOccurred(), restageLogs)
+				Expect(restageLogs).To(ContainSubstring("Restaging application"))
+				Expect(restageLogs).ToNot(ContainSubstring("Restarting application"))
 			})
 		})
 
@@ -602,7 +678,10 @@ configuration:
 		})
 	})
 
-	When("re-pushing a failed application", func() {
+	When("pushing a failed application", func() {
+		// NOTE: The staging of the application is OK.
+		// It is the actual deployment that fails!
+
 		var tmpDir string
 		var err error
 		BeforeEach(func() {
@@ -624,14 +703,7 @@ configuration:
 				// will be deleted by the other `push`.
 				_, _ = env.EpinioPush(tmpDir, appName, "--name", appName, "--builder-image", "paketobuildpacks/builder:full")
 			}()
-		})
 
-		AfterEach(func() {
-			env.DeleteApp(appName)
-			os.RemoveAll(tmpDir)
-		})
-
-		It("succeeds", func() {
 			// Wait until previous staging job is complete
 			By("waiting for the old staging job to complete")
 			Eventually(func() error {
@@ -655,6 +727,34 @@ configuration:
 				return nil
 			}, 3*time.Minute, 3*time.Second).ShouldNot(HaveOccurred())
 
+		})
+
+		AfterEach(func() {
+			env.DeleteApp(appName)
+			os.RemoveAll(tmpDir)
+		})
+
+		It("shows the proper status", func() {
+			out, err := env.Epinio("", "app", "show", appName)
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(
+				HaveATable(
+					WithHeaders("KEY", "VALUE"),
+					WithRow("Status", "((0/1)|(staging ok, deployment failed))"),
+				),
+			)
+
+			out, err = env.Epinio("", "app", "list")
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(
+				HaveATable(
+					WithHeaders("NAME", "CREATED", "STATUS", "ROUTES", "CONFIGURATIONS", "STATUS DETAILS"),
+					WithRow(appName, WithDate(), "0/1", ".*", "", ".*"),
+				),
+			)
+		})
+
+		It("succeeds when re-pushing a fix", func() {
 			// Fix the problem (so that the app now deploys fine) and push again
 			By("fixing the problem and pushing the application again")
 			os.Remove(path.Join(tmpDir, "Procfile"))
@@ -877,7 +977,7 @@ configuration:
 
 				out, err := env.EpinioPush("", appName, manifestPath)
 				Expect(err).ToNot(HaveOccurred(), out)
-				Expect(out).To(ContainSubstring(`Manifest: ` + absManifestPath))
+				Expect(out).To(ContainSubstring("Manifest: %s", absManifestPath))
 
 				// TODO : Match push output lines ?
 
@@ -1303,7 +1403,7 @@ configuration:
 			Expect(out).To(
 				HaveATable(
 					WithHeaders("NAME", "CREATED", "STATUS", "ROUTES", "CONFIGURATIONS", "STATUS DETAILS"),
-					WithRow(appName, WithDate(), "1/1", appName+".*", configurationName, ""),
+					WithRow(appName, WithDate(), "1/1", appName+".*", configurationName, ".*"),
 				),
 			)
 		})
@@ -1315,7 +1415,7 @@ configuration:
 			By(out)
 
 			Expect(out).To(ContainSubstring("Show application details"))
-			Expect(out).To(ContainSubstring("Application: " + appName))
+			Expect(out).To(ContainSubstring("Application: %s", appName))
 
 			Expect(out).To(
 				HaveATable(
@@ -1369,7 +1469,7 @@ configuration:
 				Expect(err).ToNot(HaveOccurred(), out)
 
 				Expect(out).To(ContainSubstring("Show application details"))
-				Expect(out).To(ContainSubstring("Application: " + appName))
+				Expect(out).To(ContainSubstring("Application: %s", appName))
 
 				Expect(out).To(
 					HaveATable(
@@ -1588,7 +1688,7 @@ userConfig:
 				Expect(out).To(
 					HaveATable(
 						WithHeaders("NAME", "CREATED", "STATUS", "ROUTES", "CONFIGURATIONS", "STATUS DETAILS"),
-						WithRow(app, WithDate(), "n/a", "n/a", "", ""),
+						WithRow(app, WithDate(), "0/0", "n/a", "", ""),
 					),
 				)
 			})
@@ -1600,7 +1700,23 @@ userConfig:
 				Expect(out).To(
 					HaveATable(
 						WithHeaders("KEY", "VALUE"),
-						WithRow("Status", "not deployed, staging failed"),
+						WithRow("Status", "deployed, scaled to zero"),
+					),
+				)
+			})
+
+			It("scales up to a running workload", func() {
+				out, err := env.Epinio("", "app", "update", app, "-i", "3")
+				Expect(err).ToNot(HaveOccurred(), out)
+
+				Eventually(func() string {
+					out, err := env.Epinio("", "app", "show", app)
+					ExpectWithOffset(1, err).ToNot(HaveOccurred(), out)
+					return out
+				}, "1m").Should(
+					HaveATable(
+						WithHeaders("KEY", "VALUE"),
+						WithRow("Status", "3/3"),
 					),
 				)
 			})
@@ -1649,8 +1765,8 @@ userConfig:
 			Expect(out).To(
 				HaveATable(
 					WithHeaders("NAMESPACE", "NAME", "CREATED", "STATUS", "ROUTES", "CONFIGURATIONS", "STATUS DETAILS"),
-					WithRow(namespace1, app1, WithDate(), "1/1", app1+".*", "", ""),
-					WithRow(namespace2, app2, WithDate(), "1/1", app2+".*", "", ""),
+					WithRow(namespace1, app1, WithDate(), "1/1", app1+".*", "", ".*"),
+					WithRow(namespace2, app2, WithDate(), "1/1", app2+".*", "", ".*"),
 				),
 			)
 		})
@@ -1681,18 +1797,21 @@ userConfig:
 			logLength = len(logs)
 
 			By("----------------------------------")
-			By(fmt.Sprintf("LOGS = %d lines", logLength))
+			By(fmt.Sprintf("LOGS = %d lines (raw)", logLength))
 
 			for idx, line := range logs {
+				// Exclude fake log lines caused by coverage collection.
+				if (line == "PASS") || strings.Contains(line, "coverage") {
+					logLength--
+					continue
+				}
 				By(fmt.Sprintf("LOG_ [%3d]: %s", idx, line))
 			}
 			By("----------------------------------")
+			By(fmt.Sprintf("LOGS = %d lines (filtered)", logLength))
 
-			// Skip correction dependent on coverage vs not.
+			// Skip correction (coverage, if present, is already accounted for, see above)
 			logLength = logLength - 1
-			if _, ok := os.LookupEnv("EPINIO_COVERAGE"); ok {
-				logLength = logLength - 2
-			}
 			By(fmt.Sprintf("SKIP %d lines", logLength))
 		})
 
@@ -1815,6 +1934,152 @@ userConfig:
 				"--container-image-url", containerImageURL,
 			)
 			Expect(err).ToNot(HaveOccurred(), pushOutput)
+		})
+	})
+
+	for _, command := range []string{
+		"exec",
+		"export",
+		"logs",
+		"manifest",
+		"port-forward",
+		"restage",
+		"restart",
+		"show",
+		"update",
+		"delete",
+	} {
+		Context(command+" command completion", func() {
+			BeforeEach(func() {
+				out, err := env.Epinio("", "app", "create", appName)
+				Expect(err).ToNot(HaveOccurred(), out)
+			})
+
+			AfterEach(func() {
+				env.DeleteApp(appName)
+			})
+
+			It("matches empty prefix", func() {
+				out, err := env.Epinio("", "__complete", "app", command, "")
+				Expect(err).ToNot(HaveOccurred(), out)
+				Expect(out).To(ContainSubstring(appName))
+			})
+
+			It("does not match unknown prefix", func() {
+				out, err := env.Epinio("", "__complete", "app", command, "bogus")
+				Expect(err).ToNot(HaveOccurred(), out)
+				Expect(out).ToNot(ContainSubstring("bogus"))
+			})
+
+			It("does not match bogus arguments", func() {
+				out, err := env.Epinio("", "__complete", "app", command, appName, "")
+				Expect(err).ToNot(HaveOccurred(), out)
+				Expect(out).ToNot(ContainSubstring(appName))
+			})
+		})
+	}
+
+	var _ = Describe("Custom chart-value", func() {
+		var (
+			namespace string
+			appName   string
+		)
+
+		BeforeEach(func() {
+			namespace = catalog.NewNamespaceName()
+			env.SetupAndTargetNamespace(namespace)
+
+			appName = catalog.NewAppName()
+		})
+
+		AfterEach(func() {
+			env.DeleteNamespace(namespace)
+		})
+
+		Context("with chart-value:", func() {
+			AfterEach(func() {
+				env.DeleteApp(appName)
+			})
+
+			It("appListeningPort, pushes an app", func() {
+				currentDir, err := os.Getwd()
+				Expect(err).ToNot(HaveOccurred())
+
+				appListeningPort := ""
+
+				r := rand.New(rand.NewSource(time.Now().UnixNano()))
+				if port := r.Intn(65536); port <= 1023 {
+					appListeningPort = fmt.Sprintf("%d", 80)
+				} else {
+					appListeningPort = fmt.Sprintf("%d", port)
+				}
+
+				pushOutput, err := env.EpinioPush(path.Join(currentDir, "../assets/sample-app"),
+					appName,
+					"--name", appName,
+					"--chart-value", "appListeningPort="+appListeningPort)
+				Expect(err).ToNot(HaveOccurred(), pushOutput)
+
+				out, err := proc.Kubectl("get", "app",
+					"--namespace", namespace, appName,
+					"-o", "jsonpath={.spec.settings.appListeningPort}")
+				Expect(err).NotTo(HaveOccurred(), out)
+				Expect(out).To(Equal(appListeningPort))
+
+				out, err = proc.Kubectl("get", "pod",
+					"--namespace", namespace,
+					"-o", "jsonpath={.items[0].spec.containers[0].env[0].value}")
+				Expect(err).NotTo(HaveOccurred(), out)
+				Expect(out).To(Equal(appListeningPort))
+
+				out, err = proc.Kubectl("get", "pod",
+					"--namespace", namespace,
+					"-o", "jsonpath={.items[0].spec.containers[0].ports[0].containerPort}")
+				Expect(err).NotTo(HaveOccurred(), out)
+				Expect(out).To(Equal(appListeningPort))
+
+				out, err = proc.Kubectl("get", "svc",
+					"--namespace", namespace,
+					"-o", "jsonpath={.items[0].spec.ports[0].targetPort}")
+				Expect(err).NotTo(HaveOccurred(), out)
+				Expect(out).To(Equal(appListeningPort))
+			})
+		})
+
+		Context("without chart-value:", func() {
+			AfterEach(func() {
+				env.DeleteApp(appName)
+			})
+
+			It("appListeningPort, pushes an app", func() {
+				currentDir, err := os.Getwd()
+				Expect(err).ToNot(HaveOccurred())
+
+				appListeningPort := "8080"
+
+				pushOutput, err := env.EpinioPush(path.Join(currentDir, "../assets/sample-app"),
+					appName,
+					"--name", appName)
+				Expect(err).ToNot(HaveOccurred(), pushOutput)
+
+				out, err := proc.Kubectl("get", "pod",
+					"--namespace", namespace,
+					"-o", "jsonpath={.items[0].spec.containers[0].env[0].value}")
+				Expect(err).NotTo(HaveOccurred(), out)
+				Expect(out).To(Equal(appListeningPort))
+
+				out, err = proc.Kubectl("get", "pod",
+					"--namespace", namespace,
+					"-o", "jsonpath={.items[0].spec.containers[0].ports[0].containerPort}")
+				Expect(err).NotTo(HaveOccurred(), out)
+				Expect(out).To(Equal(appListeningPort))
+
+				out, err = proc.Kubectl("get", "svc",
+					"--namespace", namespace,
+					"-o", "jsonpath={.items[0].spec.ports[0].targetPort}")
+				Expect(err).NotTo(HaveOccurred(), out)
+				Expect(out).To(Equal(appListeningPort))
+			})
 		})
 	})
 })

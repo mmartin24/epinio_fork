@@ -28,14 +28,15 @@ on:
         default: ""
 
 env:
-  SETUP_GO_VERSION: '^1.18'
+  SETUP_GO_VERSION: '1.20.4'
+  GOLANGCI_LINT_VERSION: v1.52
   GINKGO_NODES: 1
   FLAKE_ATTEMPTS: 1
   PUBLIC_CLOUD: 1
 
 jobs:
   linter:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -44,8 +45,10 @@ jobs:
           submodules: recursive
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Cache Tools
@@ -62,16 +65,17 @@ jobs:
           echo "`pwd`/output/bin" >> $GITHUB_PATH
 
       - name: Lint Epinio
-        run: make lint
-
-      - name: Clean all
-        if: always()
-        uses: colpal/actions-clean@v1
+        uses: golangci/golangci-lint-action@v3.4.0
+        timeout-minutes: 10
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --timeout=10m --skip-files docs.go
+          skip-cache: true
 
   acceptance-scenario3-up:
     needs:
       - linter
-    runs-on: self-hosted
+    runs-on: [self-hosted, epinio]
 
     steps:
       - name: Checkout
@@ -81,8 +85,10 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Login to GitHub Docker Registry
@@ -93,7 +99,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Cache Tools
         uses: actions/cache@v3
@@ -130,6 +136,11 @@ jobs:
           sudo sh -c "echo 'disable: rke2-ingress-nginx' > /etc/rancher/rke2/config.yaml.d/00-epinio.yaml"
           # Start RKE cluster
           sudo systemctl enable --now rke2-server
+          # Save kubeconfig locally and set permissions to prevent kubectl/helm warnings
+          cp /etc/rancher/rke2/rke2.yaml rke2.yaml
+          chmod u+rw,go-rwx rke2.yaml
+          pwd
+          ls -l rke2.yaml
           # Wait a "little" to let enough time for RKE cluster to be up and running
           sleep 120
 
@@ -138,18 +149,21 @@ jobs:
           EPINIO_UPGRADED: true
           REGEX: "Scenario3"
           PUBLIC_CLOUD: 1
-          KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+          KUBECONFIG: rke2.yaml
           REGISTRY_USERNAME: ${{ secrets.CFCIBOT_DOCKERHUB_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.CFCIBOT_DOCKERHUB_PASSWORD }}
           INGRESS_CONTROLLER: traefik
           # EXTRAENV_NAME: SESSION_KEY
           # EXTRAENV_VALUE: 12345
         run: |
+          export KUBECONFIG=$(pwd)/rke2.yaml
+          echo kubeconfig=$KUBECONFIG
           # EPINIO_UPGRADED triggers starting with a released epinio in suite setup, and the upgrade sequence
           # Get a free IP address on server's network
           export RANGE_IP="$(scripts/get-free-ip.sh)"
           export EPINIO_SYSTEM_DOMAIN="$(sed -e 's/-.*$//' <<< ${RANGE_IP}).omg.howdoi.website"
           export EPINIO_CURRENT_TAG="$(git describe --tags)"
+          pwd
           # Run RKE integrated install + upgrade test using latest epinio release
           mkdir dist
           scripts/get-latest-epinio.sh

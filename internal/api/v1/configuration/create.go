@@ -19,11 +19,12 @@ import (
 	apierror "github.com/epinio/epinio/pkg/api/core/v1/errors"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
 	"github.com/gin-gonic/gin"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Create handles the API end point /namespaces/:namespace/configurations
 // It creates the named configuration from its parameters
-func (sc Controller) Create(c *gin.Context) apierror.APIErrors {
+func Create(c *gin.Context) apierror.APIErrors {
 	ctx := c.Request.Context()
 	namespace := c.Param("namespace")
 	username := requestctx.User(ctx).Username
@@ -36,6 +37,11 @@ func (sc Controller) Create(c *gin.Context) apierror.APIErrors {
 
 	if createRequest.Name == "" {
 		return apierror.NewBadRequestError("cannot create configuration without a name")
+	}
+
+	errorMsgs := validation.IsDNS1123Subdomain(createRequest.Name)
+	if len(errorMsgs) > 0 {
+		return apierror.NewBadRequestErrorf("Configuration's name must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character (e.g. 'my-name', or '123-abc').")
 	}
 
 	if len(createRequest.Data) < 1 {

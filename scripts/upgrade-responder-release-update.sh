@@ -1,4 +1,4 @@
-#! /bin/sh
+#! /bin/bash
 #
 # Copyright © 2021 - 2023 SUSE LLC
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,7 +44,7 @@ function UpgradeResponderResponseJSON
   fi
 
   cat /tmp/epinio_releases.json | \
-  jq '.[] | {
+  jq '.[] | select(.draft | not) | {
     Name: (.name | split(" ")[0]),
     ReleaseDate: .published_at,
     MinUpgradableVersion: "",

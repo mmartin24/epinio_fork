@@ -23,26 +23,36 @@ var ()
 var CmdAppDelete = &cobra.Command{
 	Use:   "delete NAME1 [NAME2 ...]",
 	Short: "Deletes one or more applications",
-	Args:  cobra.MinimumNArgs(1),
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		epinioClient, err := usercmd.New(cmd.Context())
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
 
-		matches := epinioClient.AppsMatching(toComplete)
-
-		return matches, cobra.ShellCompDirectiveNoFileComp
+		filteredMatches := filteredMatchingFinder(args, toComplete, epinioClient.AppsMatching)
+		return filteredMatches, cobra.ShellCompDirectiveNoFileComp
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
+
+		all, err := cmd.Flags().GetBool("all")
+		if err != nil {
+			return errors.Wrap(err, "error reading option --all")
+		}
+
+		if all && len(args) > 0 {
+			return errors.New("Conflict between --all and named applications")
+		}
+		if !all && len(args) == 0 {
+			return errors.New("No applications specified for deletion")
+		}
 
 		client, err := usercmd.New(cmd.Context())
 		if err != nil {
 			return errors.Wrap(err, "error initializing cli")
 		}
 
-		err = client.Delete(cmd.Context(), args)
+		err = client.Delete(cmd.Context(), args, all)
 		if err != nil {
 			return errors.Wrap(err, "error deleting app")
 		}

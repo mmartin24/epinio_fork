@@ -12,6 +12,7 @@
 package application
 
 import (
+	"context"
 	"time"
 
 	"github.com/epinio/epinio/helpers/kubernetes"
@@ -39,8 +40,8 @@ import (
 //
 // It is kept for older clients still calling on it. Because of that it is also kept
 // functional. Instead of checking for an app `Deployment` and its status it now checks
-// the app `Pod` stati.
-func (hc Controller) Running(c *gin.Context) apierror.APIErrors {
+// the app `Pod` statuses.
+func Running(c *gin.Context) apierror.APIErrors {
 	ctx := c.Request.Context()
 	namespace := c.Param("namespace")
 	appName := c.Param("app")
@@ -67,7 +68,7 @@ func (hc Controller) Running(c *gin.Context) apierror.APIErrors {
 	// Check app readiness based on app pods. Wait only if we have non-ready pods.
 
 	if app.Workload.DesiredReplicas != app.Workload.ReadyReplicas {
-		err := wait.PollImmediate(time.Second, duration.ToAppBuilt(), func() (bool, error) {
+		err := wait.PollUntilContextTimeout(ctx, time.Second, duration.ToAppBuilt(), true, func(ctx context.Context) (bool, error) {
 			podList, err := application.NewWorkload(cluster, app.Meta, app.Workload.DesiredReplicas).Pods(ctx)
 			if err != nil {
 				return false, err

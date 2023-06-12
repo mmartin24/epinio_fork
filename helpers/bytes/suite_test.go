@@ -9,26 +9,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package bytes
 
 import (
-	"flag"
-	"fmt"
-	"os"
 	"testing"
-	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-// Only run our coverage binary when EPINIO_COVERAGE is set, do not run for
-// normal unit tests.
-func TestSystem(_ *testing.T) {
-	if _, ok := os.LookupEnv("EPINIO_COVERAGE"); ok {
-		if _, ok := os.LookupEnv("KUBERNETES_SERVICE_HOST"); ok {
-			flag.Set("test.coverprofile", "/tmp/coverprofile.out")
-		} else {
-			// running as CLI, don't overwrite existing files
-			flag.Set("test.coverprofile", fmt.Sprintf("/tmp/coverprofile%d.out", time.Now().Unix()))
-		}
-		main()
-	}
+func TestEpinio(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, " Bytes suite")
 }

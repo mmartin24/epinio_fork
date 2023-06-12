@@ -59,6 +59,7 @@ var _ = Describe("<Scenario6> Azure, epinio-ca, External Registry", func() {
 		registryPassword = os.Getenv("REGISTRY_PASSWORD")
 		Expect(registryPassword).ToNot(BeEmpty())
 		flags = []string{
+			"--set", "server.disableTracking=true", // disable tracking during tests
 			"--set", "global.domain=" + domain,
 			"--set", "containerregistry.enabled=false",
 			"--set", "global.registryURL=registry.hub.docker.com",
@@ -171,16 +172,6 @@ var _ = Describe("<Scenario6> Azure, epinio-ca, External Registry", func() {
 			out, err := epinioHelper.Run("apps", "delete", appName)
 			Expect(err).NotTo(HaveOccurred(), out)
 			Expect(out).To(Or(ContainSubstring("Applications Removed")))
-		})
-
-		By("Cleaning DNS Entries", func() {
-			change := route53.A(domain, loadbalancer, "DELETE")
-			out, err := route53.Update(zoneID, change, nodeTmpDir)
-			Expect(err).NotTo(HaveOccurred(), out)
-
-			change = route53.A("*."+domain, loadbalancer, "DELETE")
-			out, err = route53.Update(zoneID, change, nodeTmpDir)
-			Expect(err).NotTo(HaveOccurred(), out)
 		})
 	})
 })

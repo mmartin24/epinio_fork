@@ -16,6 +16,9 @@ categories:
   - title: '🐛 Bug Fixes'
     labels:
       - 'kind/bug'
+  - title: '📓 Documentation'
+    labels:
+      - 'area/documentation'
   - title: '🧰 Maintenance'
     labels:
       - 'kind/chore'
@@ -37,8 +40,7 @@ exclude-labels:
 
 change-template: '- $TITLE (#$NUMBER)'
 change-title-escapes: '\<*_&' # You can add # and @ to disable mentions, and add ` to disable code blocks.
-tag-template: 'v$RESOLVED_VERSION'
-name-template: 'v$RESOLVED_VERSION'
+
 template: |
 
   # What's Changed
@@ -59,7 +61,6 @@ version-resolver:
       - 'minor'
       - 'feature'
       - 'kind/enhancement'
-      - 'kind/dependencies'
   patch:
     labels:
       - 'patch'
@@ -67,4 +68,5 @@ version-resolver:
       - 'bugfix'
       - 'kind/bug'
       - 'kind/chore'
+      - 'kind/dependencies'
   default: patch

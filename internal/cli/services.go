@@ -30,7 +30,11 @@ var CmdServices = &cobra.Command{
 }
 
 func init() {
+	CmdServiceCreate.Flags().Bool("wait", false, "Wait for deployment to complete")
 	CmdServiceDelete.Flags().Bool("unbind", false, "Unbind from applications before deleting")
+	CmdServiceList.Flags().Bool("all", false, "List all services")
+	CmdServiceDelete.Flags().Bool("all", false, "delete all services")
+
 	CmdServices.AddCommand(CmdServiceCatalog)
 	CmdServices.AddCommand(CmdServiceCreate)
 	CmdServices.AddCommand(CmdServiceBind)
@@ -38,8 +42,6 @@ func init() {
 	CmdServices.AddCommand(CmdServiceShow)
 	CmdServices.AddCommand(CmdServiceDelete)
 	CmdServices.AddCommand(CmdServiceList)
-
-	CmdServiceList.Flags().Bool("all", false, "list all services")
 }
 
 var CmdServiceCatalog = &cobra.Command{
@@ -78,6 +80,11 @@ var CmdServiceCreate = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 
+		wait, err := cmd.Flags().GetBool("wait")
+		if err != nil {
+			return errors.Wrap(err, "error reading option --wait")
+		}
+
 		client, err := usercmd.New(cmd.Context())
 		if err != nil {
 			return errors.Wrap(err, "error initializing cli")
@@ -86,7 +93,7 @@ var CmdServiceCreate = &cobra.Command{
 		catalogServiceName := args[0]
 		serviceName := args[1]
 
-		err = client.ServiceCreate(catalogServiceName, serviceName)
+		err = client.ServiceCreate(catalogServiceName, serviceName, wait)
 		return errors.Wrap(err, "error creating service")
 	},
 }
@@ -114,7 +121,6 @@ var CmdServiceShow = &cobra.Command{
 var CmdServiceDelete = &cobra.Command{
 	Use:   "delete SERVICENAME1 [SERVICENAME2 ...]",
 	Short: "Delete one or more services",
-	Args:  cobra.MinimumNArgs(1),
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		app, err := usercmd.New(cmd.Context())
 		if err != nil {
@@ -122,8 +128,8 @@ var CmdServiceDelete = &cobra.Command{
 		}
 
 		app.API.DisableVersionWarning()
-		matches := app.ServiceMatching(toComplete)
 
+		matches := filteredMatchingFinder(args, toComplete, app.ServiceMatching)
 		return matches, cobra.ShellCompDirectiveNoFileComp
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -134,12 +140,24 @@ var CmdServiceDelete = &cobra.Command{
 			return errors.Wrap(err, "error reading option --unbind")
 		}
 
+		all, err := cmd.Flags().GetBool("all")
+		if err != nil {
+			return errors.Wrap(err, "error reading option --all")
+		}
+
+		if all && len(args) > 0 {
+			return errors.New("Conflict between --all and named services")
+		}
+		if !all && len(args) == 0 {
+			return errors.New("No services specified for deletion")
+		}
+
 		client, err := usercmd.New(cmd.Context())
 		if err != nil {
 			return errors.Wrap(err, "error initializing cli")
 		}
 
-		err = client.ServiceDelete(args, unbind)
+		err = client.ServiceDelete(args, unbind, all)
 		return errors.Wrap(err, "error deleting service")
 	},
 }

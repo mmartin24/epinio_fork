@@ -29,7 +29,6 @@ type NameSet map[string]struct{}
 // BoundApps is an extension of BoundAppsNames after it, to retrieve a map of configurations to
 // the full data of the applications bound to them. It uses BoundAppsNames internally to
 // quickly determine the applications to fetch.
-
 func BoundApps(ctx context.Context, cluster *kubernetes.Cluster, namespace string) (map[string]models.AppList, error) {
 
 	result := map[string]models.AppList{}
@@ -67,7 +66,6 @@ func BoundApps(ctx context.Context, cluster *kubernetes.Cluster, namespace strin
 
 // BoundAppsNamesFor is a specialization of BoundAppsNames after it, to retrieve the names
 // of the applications bound to a single configuration, specified by name.
-
 func BoundAppsNamesFor(ctx context.Context, cluster *kubernetes.Cluster, namespace, configurationName string) ([]string, error) {
 	result := []string{}
 
@@ -105,10 +103,9 @@ func BoundAppsNamesFor(ctx context.Context, cluster *kubernetes.Cluster, namespa
 // namespace name and configuration name, to distinguish same-named configurations in different
 // namespaces (See `ConfigurationKey` below). The application names never contain namespace
 // information, as they are always in the same namespace as the configuration referencing them.
+func BoundAppsNames(ctx context.Context, cluster *kubernetes.Cluster, namespace string) (map[ConfigurationKey][]string, error) {
 
-func BoundAppsNames(ctx context.Context, cluster *kubernetes.Cluster, namespace string) (map[string][]string, error) {
-
-	result := map[string][]string{}
+	result := map[ConfigurationKey][]string{}
 
 	// locate configuration bindings managed by epinio applications.
 	selector := EpinioApplicationAreaLabel + "=configuration"
@@ -128,7 +125,7 @@ func BoundAppsNames(ctx context.Context, cluster *kubernetes.Cluster, namespace 
 		namespace := binding.ObjectMeta.Labels["app.kubernetes.io/part-of"]
 
 		for configurationName := range binding.Data {
-			key := ConfigurationKey(configurationName, namespace)
+			key := EncodeConfigurationKey(configurationName, namespace)
 			result[key] = append(result[key], appName)
 		}
 	}
@@ -136,23 +133,27 @@ func BoundAppsNames(ctx context.Context, cluster *kubernetes.Cluster, namespace 
 	return result, nil
 }
 
-// ConfigurationKey constructs a single key string from configuration and namespace names, for the
+// ConfigurationKey is a type used to create a unique key for an app/namespace
+type ConfigurationKey string
+
+// EncodeConfigurationKey constructs a single key string from configuration and namespace names, for the
 // `configurationsToApps` map, when used for configurations and apps across all namespaces. It uses
 // ASCII NUL (\000) as the separator character. NUL is forbidden to occur in the names
 // themselves. This should make it impossible to construct two different pairs of
 // configuration/namespace names which map to the same key.
-func ConfigurationKey(name, namespace string) string {
-	return fmt.Sprintf("%s\000%s", name, namespace)
+func EncodeConfigurationKey(name, namespace string) ConfigurationKey {
+	return ConfigurationKey(fmt.Sprintf("%s\000%s", name, namespace))
 }
 
 // DecodeConfigurationKey splits the given key back into name and namespace.
 // The name is the first result, the namespace the second.
-func DecodeConfigurationKey(key string) (string, string) {
-	parts := strings.Split(key, "\0000")
+func DecodeConfigurationKey(key ConfigurationKey) (string, string) {
+	parts := strings.Split(string(key), "\000")
 	return parts[0], parts[1]
 }
 
-// BoundConfigurationNameSet returns the configuration names for the configurations bound to the application by a user, as a map/set
+// BoundConfigurationNameSet returns the configuration names for the configurations bound to the
+// application by a user, as a map/set.
 func BoundConfigurationNameSet(ctx context.Context, cluster *kubernetes.Cluster, appRef models.AppRef) (NameSet, error) {
 	configSecret, err := configLoad(ctx, cluster, appRef)
 	if err != nil {
@@ -167,13 +168,20 @@ func BoundConfigurationNameSet(ctx context.Context, cluster *kubernetes.Cluster,
 	return result, nil
 }
 
-// BoundConfigurationNames returns the configuration names for the configurations bound to the application by a user, as a slice. Ordered by name.
+// BoundConfigurationNames returns the configuration names for the configurations bound to the
+// application by a user, as a slice. Ordered by name.
 func BoundConfigurationNames(ctx context.Context, cluster *kubernetes.Cluster, appRef models.AppRef) ([]string, error) {
 	configSecret, err := configLoad(ctx, cluster, appRef)
 	if err != nil {
 		return nil, err
 	}
 
+	return BoundConfigurationNamesFromSecret(configSecret), nil
+}
+
+// BoundConfigurationNamesFromSecret is the core of BoundConfigurationNames, extracting the set of
+// configuration names from the secret containing them.
+func BoundConfigurationNamesFromSecret(configSecret *v1.Secret) []string {
 	result := []string{}
 	for name := range configSecret.Data {
 		result = append(result, name)
@@ -182,7 +190,7 @@ func BoundConfigurationNames(ctx context.Context, cluster *kubernetes.Cluster, a
 	// Normalize to lexicographic order.
 	sort.Strings(result)
 
-	return result, nil
+	return result
 }
 
 // BoundConfigurationsSet replaces or adds the specified configuration names to the named application.
@@ -212,7 +220,8 @@ func BoundConfigurationsUnset(ctx context.Context, cluster *kubernetes.Cluster, 
 }
 
 // configUpdate is a helper for the public functions. It encapsulates the read/modify/write cycle
-// necessary to update the application's kube resource holding the application's configuration names.
+// necessary to update the application's kube resource holding the application's configuration
+// names.
 func configUpdate(ctx context.Context, cluster *kubernetes.Cluster,
 	appRef models.AppRef, modifyBoundConfigurations func(*v1.Secret)) error {
 
@@ -235,8 +244,8 @@ func configUpdate(ctx context.Context, cluster *kubernetes.Cluster,
 	})
 }
 
-// configLoad locates and returns the kube secret storing the referenced application's bound configurations'
-// names. If necessary it creates that secret.
+// configLoad locates and returns the kube secret storing the referenced application's bound
+// configurations' names. If necessary it creates that secret.
 func configLoad(ctx context.Context, cluster *kubernetes.Cluster, appRef models.AppRef) (*v1.Secret, error) {
 	secretName := appRef.MakeConfigurationSecretName()
 	return loadOrCreateSecret(ctx, cluster, appRef, secretName, "configuration")

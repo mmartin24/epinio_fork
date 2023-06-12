@@ -23,13 +23,14 @@ import (
 	apierror "github.com/epinio/epinio/pkg/api/core/v1/errors"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
 	"github.com/pkg/errors"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/gin-gonic/gin"
 )
 
 // Create handles the API endpoint /namespaces (POST).
 // It creates a namespace with the specified name.
-func (oc Controller) Create(c *gin.Context) apierror.APIErrors {
+func Create(c *gin.Context) apierror.APIErrors {
 	ctx := c.Request.Context()
 
 	cluster, err := kubernetes.GetCluster(ctx)
@@ -46,6 +47,11 @@ func (oc Controller) Create(c *gin.Context) apierror.APIErrors {
 
 	if namespaceName == "" {
 		return apierror.NewBadRequestError("name of namespace to create not found")
+	}
+
+	errorMsgs := validation.IsDNS1123Subdomain(namespaceName)
+	if len(errorMsgs) > 0 {
+		return apierror.NewBadRequestErrorf("Namespace's name must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character (e.g. 'my-name', or '123-abc').")
 	}
 
 	exists, err := namespaces.Exists(ctx, cluster, namespaceName)

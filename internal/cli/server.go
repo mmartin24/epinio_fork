@@ -99,6 +99,12 @@ func init() {
 	err = viper.BindEnv("disable-tracking", "DISABLE_TRACKING")
 	checkErr(err)
 
+	flags.String("staging-service-account-name", "", "(STAGING_SERVICE_ACCOUNT_NAME)")
+	err = viper.BindPFlag("staging-service-account-name", flags.Lookup("staging-service-account-name"))
+	checkErr(err)
+	err = viper.BindEnv("staging-service-account-name", "STAGING_SERVICE_ACCOUNT_NAME")
+	checkErr(err)
+
 	flags.String("upgrade-responder-address", upgraderesponder.UpgradeResponderAddress, "(UPGRADE_RESPONDER_ADDRESS) Disable tracking of the running Epinio and Kubernetes versions")
 	err = viper.BindPFlag("upgrade-responder-address", flags.Lookup("upgrade-responder-address"))
 	checkErr(err)
@@ -164,7 +170,7 @@ func startServerGracefully(listener net.Listener, handler http.Handler) error {
 	quit := make(chan os.Signal, 1)
 
 	// in coverage mode we need to be able to terminate the server to collect the report
-	if _, ok := os.LookupEnv("EPINIO_COVERAGE"); ok {
+	if _, ok := os.LookupEnv("GOCOVERDIR"); ok {
 		router := handler.(*gin.Engine)
 		router.GET("/exit", func(c *gin.Context) {
 			c.AbortWithStatus(http.StatusNoContent)

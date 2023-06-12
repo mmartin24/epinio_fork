@@ -21,8 +21,6 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v2"
-
 	"github.com/pkg/errors"
 
 	"github.com/epinio/epinio/helpers/bytes"
@@ -30,6 +28,7 @@ import (
 	"github.com/epinio/epinio/internal/cli/logprinter"
 	"github.com/epinio/epinio/pkg/api/core/v1/client"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
+	"k8s.io/apimachinery/pkg/util/validation"
 	kubectlterm "k8s.io/kubectl/pkg/util/term"
 )
 
@@ -51,6 +50,11 @@ func (c *EpinioClient) AppCreate(appName string, appConfig models.ApplicationUpd
 		Msg("Create application")
 
 	details.Info("create application")
+
+	errorMsgs := validation.IsDNS1123Subdomain(appName)
+	if len(errorMsgs) > 0 {
+		return fmt.Errorf("Application's name must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character (e.g. 'my-name', or '123-abc').")
+	}
 
 	request := models.ApplicationCreateRequest{
 		Name:          appName,
@@ -124,58 +128,74 @@ func (c *EpinioClient) Apps(all bool) error {
 	sort.Sort(apps)
 
 	if all {
-		msg = c.ui.Success().WithTable("Namespace", "Name", "Created", "Status", "Routes", "Configurations", "Status Details")
+		msg = c.ui.Success().WithTable("Namespace", "Name", "Created", "Status", "Routes",
+			"Configurations", "Status Details")
+	} else {
+		msg = c.ui.Success().WithTable("Name", "Created", "Status", "Routes",
+			"Configurations", "Status Details")
+	}
 
-		for _, app := range apps {
-			if app.Workload == nil {
-				msg = msg.WithTableRow(
-					app.Meta.Namespace,
-					app.Meta.Name,
-					app.Meta.CreatedAt.String(),
-					"n/a",
-					"n/a",
-					strings.Join(app.Configuration.Configurations, ", "),
-					app.StatusMessage,
-				)
-			} else {
-				sort.Strings(app.Configuration.Configurations)
+	for _, app := range apps {
+		sort.Strings(app.Configuration.Configurations)
+		configurations := strings.Join(app.Configuration.Configurations, ", ")
 
-				msg = msg.WithTableRow(
-					app.Meta.Namespace,
-					app.Meta.Name,
-					app.Meta.CreatedAt.String(),
-					app.Workload.Status,
-					formatRoutes(app.Workload.Routes),
-					strings.Join(app.Configuration.Configurations, ", "),
-					app.StatusMessage,
-				)
+		var (
+			status        string
+			routes        string
+			statusDetails string
+		)
+
+		if app.Workload == nil {
+			status = "n/a"
+			routes = "n/a"
+
+			switch app.StagingStatus {
+			case models.ApplicationStagingActive:
+				statusDetails = "staging"
+			case models.ApplicationStagingDone:
+				if *app.Configuration.Instances == 0 {
+					status = "0/0"
+				} else {
+					// staging is done, want > 0 instances, no workload
+					statusDetails = "deployment failed"
+				}
+			case models.ApplicationStagingFailed:
+				statusDetails = "staging failed"
+			}
+		} else {
+			status = app.Workload.Status
+			routes = formatRoutes(app.Workload.Routes)
+
+			statusDetails = app.StatusMessage
+
+			if !c.metricsOk(app.Workload) {
+				if statusDetails == "" {
+					statusDetails = "metrics not available"
+				} else {
+					statusDetails += ", metrics not available"
+				}
 			}
 		}
-	} else {
-		msg = c.ui.Success().WithTable("Name", "Created", "Status", "Routes", "Configurations", "Status Details")
 
-		for _, app := range apps {
-			if app.Workload == nil {
-				msg = msg.WithTableRow(
-					app.Meta.Name,
-					app.Meta.CreatedAt.String(),
-					"n/a",
-					"n/a",
-					strings.Join(app.Configuration.Configurations, ", "),
-					app.StatusMessage,
-				)
-			} else {
-				sort.Strings(app.Configuration.Configurations)
-
-				msg = msg.WithTableRow(
-					app.Meta.Name,
-					app.Meta.CreatedAt.String(),
-					app.Workload.Status,
-					formatRoutes(app.Workload.Routes),
-					strings.Join(app.Configuration.Configurations, ", "),
-					app.StatusMessage,
-				)
-			}
+		if all {
+			msg = msg.WithTableRow(
+				app.Meta.Namespace,
+				app.Meta.Name,
+				app.Meta.CreatedAt.String(),
+				status,
+				routes,
+				configurations,
+				statusDetails,
+			)
+		} else {
+			msg = msg.WithTableRow(
+				app.Meta.Name,
+				app.Meta.CreatedAt.String(),
+				status,
+				routes,
+				configurations,
+				statusDetails,
+			)
 		}
 	}
 
@@ -277,22 +297,7 @@ func (c *EpinioClient) AppManifest(appName, manifestPath string) error {
 
 	details.Info("show application")
 
-	app, err := c.API.AppShow(c.Settings.Namespace, appName)
-	if err != nil {
-		return err
-	}
-
-	m := models.ApplicationManifest{}
-	m.Name = appName
-	m.Configuration = app.Configuration
-	m.Origin = app.Origin
-
-	yaml, err := yaml.Marshal(m)
-	if err != nil {
-		return err
-	}
-
-	err = os.WriteFile(manifestPath, yaml, 0600)
+	err := c.API.AppGetPart(c.Settings.Namespace, appName, "manifest", manifestPath)
 	if err != nil {
 		return err
 	}
@@ -442,7 +447,7 @@ func (c *EpinioClient) AppExec(ctx context.Context, appName, instance string) er
 		TryDev: true,
 	}
 
-	return c.API.AppExec(c.Settings.Namespace, appName, instance, tty)
+	return c.API.AppExec(ctx, c.Settings.Namespace, appName, instance, tty)
 }
 
 func (c *EpinioClient) AppPortForward(ctx context.Context, appName, instance string, address, ports []string) error {
@@ -469,7 +474,31 @@ func (c *EpinioClient) AppPortForward(ctx context.Context, appName, instance str
 }
 
 // Delete removes one or more applications, specified by name
-func (c *EpinioClient) Delete(ctx context.Context, appNames []string) error {
+func (c *EpinioClient) Delete(ctx context.Context, appNames []string, all bool) error {
+	if all {
+		c.ui.Note().
+			WithStringValue("Namespace", c.Settings.Namespace).
+			Msg("Querying Applications for Deletion...")
+
+		if err := c.TargetOk(); err != nil {
+			return err
+		}
+
+		// Using the match API with a query matching everything. Avoids transmission
+		// of full configuration data and having to filter client-side.
+		match, err := c.API.AppMatch(c.Settings.Namespace, "")
+		if err != nil {
+			return err
+		}
+		if len(match.Names) == 0 {
+			c.ui.Exclamation().Msg("No applications found to delete")
+			return nil
+		}
+
+		appNames = match.Names
+		sort.Strings(appNames)
+	}
+
 	namesCSV := strings.Join(appNames, ", ")
 	log := c.Log.WithName("DeleteApplication").
 		WithValues("Applications", namesCSV, "Namespace", c.Settings.Namespace)
@@ -481,12 +510,22 @@ func (c *EpinioClient) Delete(ctx context.Context, appNames []string) error {
 		WithStringValue("Namespace", c.Settings.Namespace).
 		Msg("Deleting Applications...")
 
-	if err := c.TargetOk(); err != nil {
-		return err
+	if !all {
+		if err := c.TargetOk(); err != nil {
+			return err
+		}
 	}
 
 	s := c.ui.Progressf("Deleting %s in %s", appNames, c.Settings.Namespace)
 	defer s.Stop()
+
+	go c.trackDeletion(appNames, func() []string {
+		match, err := c.API.AppMatch(c.Settings.Namespace, "")
+		if err != nil {
+			return []string{}
+		}
+		return match.Names
+	})
 
 	response, err := c.API.AppDelete(c.Settings.Namespace, appNames)
 	if err != nil {
@@ -541,7 +580,19 @@ func (c *EpinioClient) printAppDetails(app models.App) error {
 		if app.StageID == "" {
 			msg = msg.WithTableRow("Status", "not deployed")
 		} else {
-			msg = msg.WithTableRow("Status", "not deployed, staging failed")
+			switch app.StagingStatus {
+			case models.ApplicationStagingActive:
+				msg = msg.WithTableRow("Status", "not deployed, staging active")
+			case models.ApplicationStagingDone:
+				if *app.Configuration.Instances == 0 {
+					msg = msg.WithTableRow("Status", "deployed, scaled to zero")
+				} else {
+					// staging is done, want > 0 instances, no workload
+					msg = msg.WithTableRow("Status", "staging ok, deployment failed")
+				}
+			case models.ApplicationStagingFailed:
+				msg = msg.WithTableRow("Status", "not deployed, staging failed")
+			}
 			msg = msg.WithTableRow("Last StageId", app.StageID)
 		}
 
@@ -557,6 +608,7 @@ func (c *EpinioClient) printAppDetails(app models.App) error {
 
 	msg = msg.
 		WithTableRow("App Chart", app.Configuration.AppChart).
+		WithTableRow("Builder Image", app.Staging.Builder).
 		WithTableRow("Desired Instances", fmt.Sprintf("%d", *app.Configuration.Instances)).
 		WithTableRow("Bound Configurations", strings.Join(app.Configuration.Configurations, ", ")).
 		WithTableRow("Environment", "")
@@ -584,6 +636,20 @@ func (c *EpinioClient) printAppDetails(app models.App) error {
 	return nil
 }
 
+func (c *EpinioClient) metricsOk(app *models.AppDeployment) bool {
+	if len(app.Replicas) == 0 {
+		return true
+	}
+
+	for _, r := range app.Replicas {
+		if !r.MetricsOk {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (c *EpinioClient) printReplicaDetails(app models.App) error {
 	if app.Workload == nil {
 		return nil
@@ -596,11 +662,19 @@ func (c *EpinioClient) printReplicaDetails(app models.App) error {
 			if err != nil {
 				return err
 			}
+
+			millis := "not available"
+			memory := "not available"
+			if r.MetricsOk {
+				millis = strconv.Itoa(int(r.MilliCPUs))
+				memory = bytes.ByteCountIEC(r.MemoryBytes)
+			}
+
 			msg = msg.WithTableRow(
 				r.Name,
 				strconv.FormatBool(r.Ready),
-				bytes.ByteCountIEC(r.MemoryBytes),
-				strconv.Itoa(int(r.MilliCPUs)),
+				memory,
+				millis,
 				strconv.Itoa(int(r.Restarts)),
 				time.Since(createdAt).Round(time.Second).String(),
 			)
@@ -612,26 +686,42 @@ func (c *EpinioClient) printReplicaDetails(app models.App) error {
 }
 
 // AppRestage restage an application
-func (c *EpinioClient) AppRestage(appName string) error {
+func (c *EpinioClient) AppRestage(appName string, restart bool) error {
 	log := c.Log.WithName("AppRestage").WithValues("Namespace", c.Settings.Namespace, "Application", appName)
 	log.Info("start")
 	defer log.Info("return")
 
-	c.ui.Note().
+	app, err := c.API.AppShow(c.Settings.Namespace, appName)
+	if err != nil {
+		return err
+	}
+	if app.Workload == nil {
+		// No workload
+		if app.StagingStatus == models.ApplicationStagingActive {
+			// Somebody already initiated staging.
+			c.ui.Exclamation().Msg("Attention: Application is already staging")
+			return nil
+		}
+		if app.Configuration.Instances != nil && *app.Configuration.Instances == 0 {
+			// Scaled to zero, no workload desired -> prevent (re)start.
+			restart = false
+		}
+	}
+
+	m := c.ui.Note().
 		WithStringValue("Namespace", c.Settings.Namespace).
-		WithStringValue("Application", appName).
-		Msg("Restaging application")
+		WithStringValue("Application", appName)
+	if restart {
+		m.Msg("Restaging and restarting application")
+	} else {
+		m.Msg("Restaging application")
+	}
 
 	if err := c.TargetOk(); err != nil {
 		return err
 	}
 
 	log.V(1).Info("restaging application")
-
-	app, err := c.API.AppShow(c.Settings.Namespace, appName)
-	if err != nil {
-		return err
-	}
 
 	if app.Origin.Kind == models.OriginContainer {
 		c.ui.Note().Msg("Unable to restage container-based application")
@@ -653,7 +743,18 @@ func (c *EpinioClient) AppRestage(appName string) error {
 	log.V(1).Info("wait for job", "StageID", stageID)
 	// blocking function that wait until the staging is done
 	_, err = c.API.StagingComplete(app.Meta.Namespace, stageID)
-	return errors.Wrap(err, "waiting for staging failed")
+	if err != nil {
+		return errors.Wrap(err, "waiting for staging failed")
+	}
+
+	if restart {
+		c.ui.Note().Msg("Restarting application")
+		log.V(1).Info("restarting application")
+
+		return c.API.AppRestart(c.Settings.Namespace, appName)
+	}
+
+	return nil
 }
 
 func formatRoutes(routes []string) string {

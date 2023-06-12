@@ -12,7 +12,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -32,6 +31,7 @@ func init() {
 	CmdConfiguration.AddCommand(CmdConfigurationList)
 
 	CmdConfigurationList.Flags().Bool("all", false, "list all configurations")
+	CmdConfigurationDelete.Flags().Bool("all", false, "delete all configurations")
 
 	changeOptions(CmdConfigurationUpdate)
 }
@@ -55,26 +55,12 @@ var CmdConfiguration = &cobra.Command{
 
 // CmdConfigurationShow implements the command: epinio configuration show
 var CmdConfigurationShow = &cobra.Command{
-	Use:   "show NAME",
-	Short: "Configuration information",
-	Long:  `Show detailed information of the named configuration.`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  ConfigurationShow,
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) != 0 {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-
-		app, err := usercmd.New(cmd.Context())
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		app.API.DisableVersionWarning()
-
-		matches := app.ConfigurationMatching(context.Background(), toComplete)
-
-		return matches, cobra.ShellCompDirectiveNoFileComp
-	},
+	Use:               "show NAME",
+	Short:             "Configuration information",
+	Long:              `Show detailed information of the named configuration.`,
+	Args:              cobra.ExactArgs(1),
+	RunE:              ConfigurationShow,
+	ValidArgsFunction: matchingConfigurationFinder,
 }
 
 // CmdConfigurationCreate implements the command: epinio configuration create
@@ -96,7 +82,7 @@ var CmdConfigurationCreate = &cobra.Command{
 
 // CmdConfigurationUpdate implements the command: epinio configuration create
 var CmdConfigurationUpdate = &cobra.Command{
-	Use:   "update NAME",
+	Use:   "update NAME [flags]",
 	Short: "Update a configuration",
 	Long:  `Update configuration by name and change instructions through flags.`,
 	Args:  cobra.ExactArgs(1),
@@ -108,7 +94,6 @@ var CmdConfigurationDelete = &cobra.Command{
 	Use:   "delete NAME1 [NAME2 ...]",
 	Short: "Delete one or more configurations",
 	Long:  `Delete configurations by name.`,
-	Args:  cobra.MinimumNArgs(1),
 	RunE:  ConfigurationDelete,
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		epinioClient, err := usercmd.New(cmd.Context())
@@ -117,7 +102,7 @@ var CmdConfigurationDelete = &cobra.Command{
 		}
 		epinioClient.API.DisableVersionWarning()
 
-		matches := epinioClient.ConfigurationMatching(context.Background(), toComplete)
+		matches := filteredMatchingFinder(args, toComplete, epinioClient.ConfigurationMatching)
 
 		return matches, cobra.ShellCompDirectiveNoFileComp
 	},
@@ -125,65 +110,22 @@ var CmdConfigurationDelete = &cobra.Command{
 
 // CmdConfigurationBind implements the command: epinio configuration bind
 var CmdConfigurationBind = &cobra.Command{
-	Use:   "bind NAME APP",
-	Short: "Bind a configuration to an application",
-	Long:  `Bind configuration by name, to named application.`,
-	Args:  cobra.ExactArgs(2),
-	RunE:  ConfigurationBind,
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) > 1 {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-
-		app, err := usercmd.New(cmd.Context())
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		app.API.DisableVersionWarning()
-
-		if len(args) == 1 {
-			// #args == 1: app name.
-			matches := app.AppsMatching(toComplete)
-			return matches, cobra.ShellCompDirectiveNoFileComp
-		}
-
-		// #args == 0: configuration name.
-
-		matches := app.ConfigurationMatching(context.Background(), toComplete)
-
-		return matches, cobra.ShellCompDirectiveNoFileComp
-	},
+	Use:               "bind NAME APP",
+	Short:             "Bind a configuration to an application",
+	Long:              `Bind configuration by name, to named application.`,
+	Args:              cobra.ExactArgs(2),
+	RunE:              ConfigurationBind,
+	ValidArgsFunction: findConfigurationApp,
 }
 
 // CmdConfigurationUnbind implements the command: epinio configuration unbind
 var CmdConfigurationUnbind = &cobra.Command{
-	Use:   "unbind NAME APP",
-	Short: "Unbind configuration from an application",
-	Long:  `Unbind configuration by name, from named application.`,
-	Args:  cobra.ExactArgs(2),
-	RunE:  ConfigurationUnbind,
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) > 1 {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-
-		app, err := usercmd.New(cmd.Context())
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		app.API.DisableVersionWarning()
-
-		if len(args) == 1 {
-			// #args == 1: app name.
-			matches := app.AppsMatching(toComplete)
-			return matches, cobra.ShellCompDirectiveNoFileComp
-		}
-
-		// #args == 0: configuration name.
-		matches := app.ConfigurationMatching(context.Background(), toComplete)
-
-		return matches, cobra.ShellCompDirectiveNoFileComp
-	},
+	Use:               "unbind NAME APP",
+	Short:             "Unbind configuration from an application",
+	Long:              `Unbind configuration by name, from named application.`,
+	Args:              cobra.ExactArgs(2),
+	RunE:              ConfigurationUnbind,
+	ValidArgsFunction: findConfigurationApp,
 }
 
 // CmdConfigurationList implements the command: epinio configuration list
@@ -297,12 +239,24 @@ func ConfigurationDelete(cmd *cobra.Command, args []string) error {
 		return errors.Wrap(err, "error reading option --unbind")
 	}
 
+	all, err := cmd.Flags().GetBool("all")
+	if err != nil {
+		return errors.Wrap(err, "error reading option --all")
+	}
+
+	if all && len(args) > 0 {
+		return errors.New("Conflict between --all and named configurations")
+	}
+	if !all && len(args) == 0 {
+		return errors.New("No configurations specified for deletion")
+	}
+
 	client, err := usercmd.New(cmd.Context())
 	if err != nil {
 		return errors.Wrap(err, "error initializing cli")
 	}
 
-	err = client.DeleteConfiguration(args, unbind)
+	err = client.DeleteConfiguration(args, unbind, all)
 	if err != nil {
 		return errors.Wrap(err, "error deleting configuration")
 	}
@@ -353,4 +307,27 @@ func changeOptions(cmd *cobra.Command) {
 	// Note: No completion functionality. This would require asking the configuration for
 	// its details so that the keys to remove can be matched. And add/modify cannot
 	// check anyway.
+}
+
+func findConfigurationApp(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 1 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	app, err := usercmd.New(cmd.Context())
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	app.API.DisableVersionWarning()
+
+	if len(args) == 1 {
+		// #args == 1: app name.
+		matches := app.AppsMatching(toComplete)
+		return matches, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	// #args == 0: configuration name.
+
+	matches := app.ConfigurationMatching(toComplete)
+	return matches, cobra.ShellCompDirectiveNoFileComp
 }

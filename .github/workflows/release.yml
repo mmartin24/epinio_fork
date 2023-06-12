@@ -22,9 +22,12 @@ permissions:
   contents: write
   packages: write
 
+env:
+  SETUP_GO_VERSION: '1.20.4'
+
 jobs:
   release:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       id-token: write   # This is the key for OIDC!
       contents: write
@@ -38,15 +41,11 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
-          go-version: '1.18'
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+          cache: false
+          go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Login to GitHub Docker Registry
         uses: docker/login-action@v2
@@ -55,9 +54,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: anchore/sbom-action/download-syft@v0.13.1
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
 
-      - uses: sigstore/cosign-installer@v2.8.1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - uses: anchore/sbom-action/download-syft@v0.14.1
+
+      - uses: sigstore/cosign-installer@v3.0.5
 
       - name: Get latest tag
         id: get_latest_tag
@@ -67,11 +72,19 @@ jobs:
         uses: goreleaser/goreleaser-action@v4
         with:
           distribution: goreleaser
-          version: 1.11.4
+          version: 1.18.2
           args: release --rm-dist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMMITTER_TOKEN: ${{ secrets.COMMITTER_TOKEN }}
+      
+      # Goreleaser will cleanup the draft, so we need to populate it again
+      - name: Run Releaser Drafter
+        uses: release-drafter/release-drafter@v5
+        with:
+          config-name: release-drafter.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get current tag
         id: get_tag
@@ -80,11 +93,15 @@ jobs:
       - name: Verify signatures on the generated docker images and manifests
         id: verify_signatures
         run: |
-          cosign verify ghcr.io/epinio/epinio-server:${{ steps.get_latest_tag.outputs.LATEST_TAG }}
-          cosign verify ghcr.io/epinio/epinio-unpacker:${{ steps.get_latest_tag.outputs.LATEST_TAG }}
-        env:
-          DOCKER_CLI_EXPERIMENTAL: enabled
-          COSIGN_EXPERIMENTAL: 1
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/epinio/epinio" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            ghcr.io/epinio/epinio-server:${{ steps.get_latest_tag.outputs.LATEST_TAG }}
+          
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/epinio/epinio" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            ghcr.io/epinio/epinio-unpacker:${{ steps.get_latest_tag.outputs.LATEST_TAG }}
 
       # Trigger automatic release of the Epinio Helm chart when we release
       # Epinio, by posting an event to the helm chart repository. This event

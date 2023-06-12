@@ -49,15 +49,18 @@ import (
 // GetPart handles the API endpoint GET /namespaces/:namespace/applications/:app/part/:part
 // It determines the contents of the requested part (values, chart, image) and returns as
 // the response of the handler.
-func (hc Controller) GetPart(c *gin.Context) apierror.APIErrors {
+func GetPart(c *gin.Context) apierror.APIErrors {
 	ctx := c.Request.Context()
 	namespace := c.Param("namespace")
 	appName := c.Param("app")
 	partName := c.Param("part")
 	logger := requestctx.Logger(ctx)
 
-	if partName != "values" && partName != "chart" && partName != "image" {
-		return apierror.NewBadRequestError("unknown part, expected chart, image, or values")
+	switch partName {
+	case "manifest", "values", "chart", "image":
+		// valid parts, no error
+	default:
+		return apierror.NewBadRequestErrorf("unknown '%s' part, expected chart, manifest, image, or values", partName)
 	}
 
 	cluster, err := kubernetes.GetCluster(ctx)
@@ -74,9 +77,14 @@ func (hc Controller) GetPart(c *gin.Context) apierror.APIErrors {
 		return apierror.AppIsNotKnown(appName)
 	}
 
+	if partName == "manifest" {
+		return fetchAppManifest(c, app)
+	}
+
+	// While the app exists it has no workload, and therefore no chart/image/values to
+	// export. Manifest however is fine, see above for its handler.
+
 	if app.Workload == nil {
-		// While the app exists it has no workload, and therefore no chart to
-		// export
 		return apierror.NewBadRequestError("no chart available for application without workload")
 	}
 
@@ -89,7 +97,7 @@ func (hc Controller) GetPart(c *gin.Context) apierror.APIErrors {
 		return fetchAppValues(c, logger, cluster, app.Meta)
 	}
 
-	return apierror.NewBadRequestError("unknown part, expected chart, image, or values")
+	return apierror.InternalError(fmt.Errorf("should not be reached"))
 }
 
 func fetchAppChart(c *gin.Context, ctx context.Context, logger logr.Logger, cluster *kubernetes.Cluster, app models.AppRef) apierror.APIErrors {
@@ -221,6 +229,52 @@ func runDownloadImageJob(ctx context.Context, cluster *kubernetes.Cluster, jobNa
 		"app.kubernetes.io/component":  "staging",
 	}
 
+	volumes := []corev1.Volume{{
+		Name: "image-export-volume",
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: "image-export-pvc",
+			},
+		},
+	}, {
+		Name: "registry-creds-volume",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: registry.CredentialsSecretName,
+				Items: []corev1.KeyToPath{
+					{
+						Key:  ".dockerconfigjson",
+						Path: "auth.json",
+					},
+				},
+			},
+		},
+	}}
+
+	mounts := []corev1.VolumeMount{{
+		Name:      "image-export-volume",
+		MountPath: "/tmp/",
+	}, {
+		Name:      "registry-creds-volume",
+		MountPath: "/root/containers/",
+	}}
+
+	registryCertificateSecret := viper.GetString("registry-certificate-secret")
+	if registryCertificateSecret != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "registry-cert-volume",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: registryCertificateSecret,
+				},
+			},
+		})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      "registry-cert-volume",
+			MountPath: "/etc/ssl/certs/",
+		})
+	}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        jobName,
@@ -246,47 +300,11 @@ func runDownloadImageJob(ctx context.Context, cluster *kubernetes.Cluster, jobNa
 								"docker://" + imageURL,
 								"docker-archive:/tmp/" + imageOutputFilename,
 							},
-							VolumeMounts: []corev1.VolumeMount{{
-								Name:      "image-export-volume",
-								MountPath: "/tmp/",
-							}, {
-								Name:      "registry-cert-volume",
-								MountPath: "/etc/ssl/certs/",
-							}, {
-								Name:      "registry-creds-volume",
-								MountPath: "/root/containers/",
-							}},
+							VolumeMounts: mounts,
 						},
 					},
 					RestartPolicy: corev1.RestartPolicyNever,
-					Volumes: []corev1.Volume{{
-						Name: "image-export-volume",
-						VolumeSource: corev1.VolumeSource{
-							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: "image-export-pvc",
-							},
-						},
-					}, {
-						Name: "registry-cert-volume",
-						VolumeSource: corev1.VolumeSource{
-							Secret: &corev1.SecretVolumeSource{
-								SecretName: "epinio-registry-tls",
-							},
-						},
-					}, {
-						Name: "registry-creds-volume",
-						VolumeSource: corev1.VolumeSource{
-							Secret: &corev1.SecretVolumeSource{
-								SecretName: registry.CredentialsSecretName,
-								Items: []corev1.KeyToPath{
-									{
-										Key:  ".dockerconfigjson",
-										Path: "auth.json",
-									},
-								},
-							},
-						},
-					}},
+					Volumes:       volumes,
 				},
 			},
 		},
@@ -320,6 +338,21 @@ func fetchAppValues(c *gin.Context, logger logr.Logger, cluster *kubernetes.Clus
 	}
 
 	response.OKBytes(c, yaml)
+	return nil
+}
+
+func fetchAppManifest(c *gin.Context, app *models.App) apierror.APIErrors {
+	m := models.ApplicationManifest{
+		ApplicationCreateRequest: models.ApplicationCreateRequest{
+			Name:          app.Meta.Name,
+			Configuration: app.Configuration,
+		},
+		Namespace: app.Meta.Namespace,
+		Origin:    app.Origin,
+		Staging:   app.Staging,
+	}
+
+	response.OKYaml(c, m)
 	return nil
 }
 

@@ -62,6 +62,7 @@ var _ = Describe("<Scenario4> EKS, epinio-ca, on S3 storage", func() {
 		Expect(secretAccessKey).ToNot(BeEmpty())
 
 		flags = []string{
+			"--set", "server.disableTracking=true", // disable tracking during tests
 			"--set", "global.domain=" + domain,
 			"--set", "minio.enabled=false",
 			"--set", "s3.useSSL=true",
@@ -88,12 +89,12 @@ var _ = Describe("<Scenario4> EKS, epinio-ca, on S3 storage", func() {
 		By("Checking LoadBalancer IP", func() {
 			// Ensure that Nginx LB is not in Pending state anymore, could take time
 			Eventually(func() string {
-				out, err := proc.RunW("kubectl", "get", "svc", "-n", "ingress-nginx", "ingress-nginx-controller", "--no-headers")
+				out, err := proc.RunW("kubectl", "get", "svc", "-n", "ingress-nginx", "nginx-ingress-controller", "--no-headers")
 				Expect(err).NotTo(HaveOccurred(), out)
 				return out
 			}, "4m", "2s").ShouldNot(ContainSubstring("<pending>"))
 
-			out, err := proc.RunW("kubectl", "get", "service", "-n", "ingress-nginx", "ingress-nginx-controller", "-o", "json")
+			out, err := proc.RunW("kubectl", "get", "service", "-n", "ingress-nginx", "nginx-ingress-controller", "-o", "json")
 			Expect(err).NotTo(HaveOccurred(), out)
 
 			// Check that an IP address for LB is configured
@@ -143,6 +144,13 @@ var _ = Describe("<Scenario4> EKS, epinio-ca, on S3 storage", func() {
 			Expect(err).ToNot(HaveOccurred(), out)
 		})
 
+		By("Allow internal HTTP registry on EKS 1.24+", func() {
+			out, err := proc.Run(testenv.Root(), true, "kubectl", "apply", "-f", "./scripts/eks-cri-allow-http-registries.yaml")
+			Expect(err).ToNot(HaveOccurred(), out)
+			out, err = proc.Kubectl("wait", "--for=condition=complete", "job/setup-cri")
+			Expect(err).ToNot(HaveOccurred(), out)
+		})
+
 		By("Connecting to Epinio", func() {
 			Eventually(func() string {
 				out, _ := epinioHelper.Run("login", "-u", "admin", "-p", "password", "--trust-ca", "https://epinio."+domain)
@@ -155,6 +163,13 @@ var _ = Describe("<Scenario4> EKS, epinio-ca, on S3 storage", func() {
 				out, _ := epinioHelper.Run("info")
 				return out
 			}, "2m", "2s").Should(ContainSubstring("Epinio Server Version:"))
+		})
+
+		By("Targeting workspace namespace", func() {
+			Eventually(func() string {
+				out, _ := epinioHelper.Run("target", "workspace")
+				return out
+			}, "2m", "2s").Should(ContainSubstring("Namespace targeted."))
 		})
 
 		By("Creating the application", func() {
@@ -208,16 +223,6 @@ var _ = Describe("<Scenario4> EKS, epinio-ca, on S3 storage", func() {
 			out, err := epinioHelper.Run("apps", "delete", appName)
 			Expect(err).NotTo(HaveOccurred(), out)
 			Expect(out).To(Or(ContainSubstring("Applications Removed")))
-		})
-
-		By("Cleaning DNS Entries", func() {
-			change := route53.CNAME(domain, loadbalancer, "DELETE")
-			out, err := route53.Update(zoneID, change, nodeTmpDir)
-			Expect(err).NotTo(HaveOccurred(), out)
-
-			change = route53.CNAME("*."+domain, loadbalancer, "DELETE")
-			out, err = route53.Update(zoneID, change, nodeTmpDir)
-			Expect(err).NotTo(HaveOccurred(), out)
 		})
 	})
 })

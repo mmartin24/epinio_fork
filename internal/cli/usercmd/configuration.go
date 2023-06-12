@@ -12,7 +12,6 @@
 package usercmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,6 +20,7 @@ import (
 
 	apierrors "github.com/epinio/epinio/pkg/api/core/v1/errors"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Configurations gets all Epinio configurations in the targeted namespace
@@ -110,7 +110,7 @@ func (c *EpinioClient) Configurations(all bool) error {
 
 // ConfigurationMatching returns all Epinio configurations having the specified prefix
 // in their name.
-func (c *EpinioClient) ConfigurationMatching(ctx context.Context, prefix string) []string {
+func (c *EpinioClient) ConfigurationMatching(prefix string) []string {
 	log := c.Log.WithName("ConfigurationMatching").WithValues("PrefixToMatch", prefix)
 	log.Info("start")
 	defer log.Info("return")
@@ -207,7 +207,31 @@ func (c *EpinioClient) UnbindConfiguration(configurationName, appName string) er
 }
 
 // DeleteConfiguration deletes one or more configurations, specified by name
-func (c *EpinioClient) DeleteConfiguration(names []string, unbind bool) error {
+func (c *EpinioClient) DeleteConfiguration(names []string, unbind, all bool) error {
+	if all {
+		c.ui.Note().
+			WithStringValue("Namespace", c.Settings.Namespace).
+			Msg("Querying Configurations for Deletion...")
+
+		if err := c.TargetOk(); err != nil {
+			return err
+		}
+
+		// Using the match API with a query matching everything. Avoids transmission
+		// of full configuration data and having to filter client-side.
+		match, err := c.API.ConfigurationMatch(c.Settings.Namespace, "")
+		if err != nil {
+			return err
+		}
+		if len(match.Names) == 0 {
+			c.ui.Exclamation().Msg("No configurations found to delete")
+			return nil
+		}
+
+		names = match.Names
+		sort.Strings(names)
+	}
+
 	namesCSV := strings.Join(names, ", ")
 	log := c.Log.WithName("DeleteConfiguration").
 		WithValues("Names", namesCSV, "Namespace", c.Settings.Namespace)
@@ -219,8 +243,10 @@ func (c *EpinioClient) DeleteConfiguration(names []string, unbind bool) error {
 		WithStringValue("Namespace", c.Settings.Namespace).
 		Msg("Deleting Configurations...")
 
-	if err := c.TargetOk(); err != nil {
-		return err
+	if !all {
+		if err := c.TargetOk(); err != nil {
+			return err
+		}
 	}
 
 	request := models.ConfigurationDeleteRequest{
@@ -228,6 +254,17 @@ func (c *EpinioClient) DeleteConfiguration(names []string, unbind bool) error {
 	}
 
 	var bound []string
+
+	s := c.ui.Progressf("Deleting %s in %s", names, c.Settings.Namespace)
+	defer s.Stop()
+
+	go c.trackDeletion(names, func() []string {
+		match, err := c.API.ConfigurationMatch(c.Settings.Namespace, "")
+		if err != nil {
+			return []string{}
+		}
+		return match.Names
+	})
 
 	_, err := c.API.ConfigurationDelete(request, c.Settings.Namespace, names,
 		func(response *http.Response, bodyBytes []byte, err error) error {
@@ -248,8 +285,8 @@ func (c *EpinioClient) DeleteConfiguration(names []string, unbind bool) error {
 				return err
 			}
 
-			// [BELONG] keep in sync with same marker in the server
-			if strings.Contains(apiError.Errors[0].Title, "Configuration belongs to service") {
+			// [BELONG] keep in sync with same markers in the server
+			if strings.Contains(apiError.Errors[0].Title, "belongs to service") {
 				// (2.)
 				return apiError.Errors[0]
 			}
@@ -358,6 +395,11 @@ func (c *EpinioClient) CreateConfiguration(name string, dict []string) error {
 
 	if err := c.TargetOk(); err != nil {
 		return err
+	}
+
+	errorMsgs := validation.IsDNS1123Subdomain(name)
+	if len(errorMsgs) > 0 {
+		return fmt.Errorf("Configuration's name must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character (e.g. 'my-name', or '123-abc').")
 	}
 
 	request := models.ConfigurationCreateRequest{

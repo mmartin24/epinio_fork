@@ -33,13 +33,13 @@ on:
 
 env:
   EPINIO_RELEASED: true
-  SETUP_GO_VERSION: '^1.18'
+  SETUP_GO_VERSION: '1.20.4'
   GINKGO_NODES: 2
   INGRESS_CONTROLLER: traefik
 
 jobs:
   upgrade-test:
-    runs-on: self-hosted
+    runs-on: [self-hosted, epinio]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -48,12 +48,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Cache Tools
         uses: actions/cache@v3.0.8

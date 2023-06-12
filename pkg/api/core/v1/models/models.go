@@ -107,20 +107,21 @@ type BindResponse struct {
 }
 
 // ApplicationManifest represents and contains the data of an application's manifest file,
-// plus some auxiliary data never (un)marshaled. Namely, the file's location, and origin
+// plus some auxiliary data never (un)marshalled. Namely, the file's location, and origin
 // type tag.
 type ApplicationManifest struct {
 	ApplicationCreateRequest `yaml:",inline"`
 	Self                     string            `yaml:"-"` // Hidden from yaml. The file's location.
 	Origin                   ApplicationOrigin `yaml:"origin,omitempty"`
 	Staging                  ApplicationStage  `yaml:"staging,omitempty"`
+	Namespace                string            `yaml:"namespace,omitempty"`
 }
 
 // ApplicationStage is the part of the manifest holding information
 // relevant to staging the application's sources. This is, currently,
 // only the reference to the Paketo builder image to use.
 type ApplicationStage struct {
-	Builder string `yaml:"builder,omitempty"`
+	Builder string `yaml:"builder,omitempty" json:"builder,omitempty"`
 }
 
 // ApplicationOrigin is the part of the manifest describing the origin of the application
@@ -134,6 +135,7 @@ type ApplicationOrigin struct {
 	Container string  `yaml:"container,omitempty" json:"container,omitempty"`
 	Git       *GitRef `yaml:"git,omitempty"       json:"git,omitempty"`
 	Path      string  `yaml:"path,omitempty"      json:"path,omitempty"`
+	Archive   bool    `yaml:"archive,omitempty"   json:"archive,omitempty"`
 }
 
 // manifest origin codes for `Kind`.
@@ -147,10 +149,19 @@ const (
 func (o *ApplicationOrigin) String() string {
 	switch o.Kind {
 	case OriginPath:
+		if o.Archive {
+			return helpers.AbsPath(o.Path) + " (archive)"
+		}
 		return helpers.AbsPath(o.Path)
 	case OriginGit:
 		if o.Git.Revision == "" {
+			if o.Git.Branch != "" {
+				return fmt.Sprintf("%s on %s", o.Git.URL, o.Git.Branch)
+			}
 			return o.Git.URL
+		}
+		if o.Git.Branch != "" {
+			return fmt.Sprintf("%s @ %s (on %s)", o.Git.URL, o.Git.Revision, o.Git.Branch)
 		}
 		return fmt.Sprintf("%s @ %s", o.Git.URL, o.Git.Revision)
 	case OriginContainer:
@@ -292,6 +303,7 @@ type CatalogMatchResponse struct {
 type ServiceCreateRequest struct {
 	CatalogService string `json:"catalog_service,omitempty"`
 	Name           string `json:"name,omitempty"`
+	Wait           bool   `json:"wait,omitempty"`
 }
 
 // CatalogService mostly matches github.com/epinio/application/api/v1 ServiceSpec

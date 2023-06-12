@@ -10,7 +10,7 @@
 # limitations under the License.
 
 run:
-  go: "1.18"
+  go: "1.20.4"
   deadline: 20s
 
   # don't report issues from these dirs
@@ -30,7 +30,7 @@ linters-settings:
       severity: warning
   funlen:
     # Checks the number of lines in a function. Default: 60
-    lines: 270
+    lines: 250
     # Checks the number of statements in a function. Default: 40
     statements: 110
 

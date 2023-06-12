@@ -12,7 +12,7 @@
 name: "CodeQL"
 
 env:
-  SETUP_GO_VERSION: '^1.18'
+  SETUP_GO_VERSION: '1.20.4'
 
 on:
   workflow_dispatch:
@@ -46,7 +46,8 @@ jobs:
         submodules: recursive
 
     - name: Setup Go
-      uses: actions/setup-go@v3
+      uses: actions/setup-go@v4
+      timeout-minutes: 5
       with:
         go-version: ${{ env.SETUP_GO_VERSION }}
 

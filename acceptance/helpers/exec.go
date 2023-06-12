@@ -9,9 +9,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Namespace contains the API handlers to manage namespaces.
-package namespace
+package helpers
 
-// Controller represents all functionality of the API related to namespaces
-type Controller struct {
+import (
+	"os"
+)
+
+// CreateTmpFile creates a temporary file on the disk with the given contents
+// and returns the path to it and an error if something goes wrong.
+func CreateTmpFile(contents string) (string, error) {
+	tmpfile, err := os.CreateTemp("", "epinio")
+	if err != nil {
+		return tmpfile.Name(), err
+	}
+	if _, err := tmpfile.Write([]byte(contents)); err != nil {
+		return tmpfile.Name(), err
+	}
+	if err := tmpfile.Close(); err != nil {
+		return tmpfile.Name(), err
+	}
+
+	return tmpfile.Name(), nil
 }

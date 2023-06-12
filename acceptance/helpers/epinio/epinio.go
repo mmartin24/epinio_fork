@@ -56,62 +56,63 @@ func (e *Epinio) Upgrade() {
 	By("Tag: " + tag)
 
 	By("Building server image ...")
-	out, err := proc.Run("../..", false, "docker", "build", "-t", "epinio/epinio-server",
-		"-f", "images/Dockerfile", ".")
+	serverTag := fmt.Sprintf("ghcr.io/epinio/epinio-server:%s", tag)
+	out, err := proc.Run("../..", false, "docker", "build", "-t", serverTag, "-f", "images/Dockerfile", ".")
 	Expect(err).NotTo(HaveOccurred(), out)
 	By(out)
 
 	By("Building unpacker image ...")
-	out, err = proc.Run("../..", false, "docker", "build", "-t", "epinio/epinio-unpacker",
-		"-f", "images/unpacker-Dockerfile", ".")
+	unpackerTag := fmt.Sprintf("ghcr.io/epinio/epinio-unpacker:%s", tag)
+	out, err = proc.Run("../..", false, "docker", "build", "-t", unpackerTag, "-f", "images/unpacker-Dockerfile", ".")
 	Expect(err).NotTo(HaveOccurred(), out)
 	By(out)
 
-	local := "epinio/epinio-server"
-	remote := fmt.Sprintf("ghcr.io/%s:%s", local, tag)
-
-	localPacker := "epinio/epinio-unpacker"
-	remotePacker := fmt.Sprintf("ghcr.io/%s:%s", localPacker, tag)
-
-	By("Image: " + remote)
-	By("Image: " + remotePacker)
+	By("Image: " + serverTag)
+	By("Image: " + unpackerTag)
 
 	if os.Getenv("PUBLIC_CLOUD") == "" {
 		// Local k3ds/k3d-based cluster. Talk directly to it. Import the new images into k3d
 		By("Importing server image ...")
-		out, err = proc.RunW("k3d", "image", "import", "-c", "epinio-acceptance", remote)
+		out, err = proc.RunW("k3d", "image", "import", "-c", "epinio-acceptance", serverTag)
 		Expect(err).NotTo(HaveOccurred(), out)
 		By(out)
 
 		By("Importing unpacker image ...")
-		out, err = proc.RunW("k3d", "image", "import", "-c", "epinio-acceptance", remotePacker)
+		out, err = proc.RunW("k3d", "image", "import", "-c", "epinio-acceptance", unpackerTag)
 		Expect(err).NotTo(HaveOccurred(), out)
 		By(out)
 	} else {
 		By("Pushing server image to GHCR ...")
 		// PUBLIC_CLOUD is present
 		// Pushing new images into ghcr for the public cluster to pull from
-		out, err = proc.RunW("docker", "tag", local+":latest", remote)
+		out, err = proc.RunW("docker", "push", serverTag)
 		Expect(err).NotTo(HaveOccurred(), out)
 		By(out)
 
-		out, err = proc.RunW("docker", "push", remote)
-		Expect(err).NotTo(HaveOccurred(), out)
-		By(out)
-
-		out, err = proc.RunW("docker", "tag", localPacker+":latest", remotePacker)
-		Expect(err).NotTo(HaveOccurred(), out)
-		By(out)
-
-		out, err = proc.RunW("docker", "push", remotePacker)
+		out, err = proc.RunW("docker", "push", unpackerTag)
 		Expect(err).NotTo(HaveOccurred(), out)
 		By(out)
 	}
 
+	// If the chart has new defaults Helm will not get these values when using --set and --reuse-values
+	// To get the new defaults, the previous values and the --set we need to fetch the values and pass them.
+	// See: https://shipmight.com/blog/understanding-helm-upgrade-reset-reuse-values
+	// also: https://github.com/helm/helm/issues/8085
+
+	By("Get old Helm values")
+	prevValuesFile := "prev-values.yaml"
+
+	out, err = proc.RunW("helm", "get", "values", "epinio", "-n", "epinio", "-o", "yaml")
+	Expect(err).NotTo(HaveOccurred(), out)
+	By("Old values = ((" + out + "))")
+	err = os.WriteFile(prevValuesFile, []byte(out), 0600)
+	Expect(err).NotTo(HaveOccurred(), out)
+
 	By("Upgrading server side")
-	out, err = proc.RunW("helm", "upgrade", "--reuse-values", "epinio",
+	out, err = proc.RunW("helm", "upgrade", "epinio",
 		"-n", "epinio",
 		"../../helm-charts/chart/epinio",
+		"--values", prevValuesFile,
 		"--set", "image.epinio.registry=ghcr.io/",
 		"--set", fmt.Sprintf("image.epinio.tag=%s", tag),
 		"--set", fmt.Sprintf("image.bash.tag=%s", tag),

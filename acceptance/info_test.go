@@ -9,7 +9,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package service
+package acceptance_test
 
-// Controller represents all functionality of the API related to services
-type Controller struct{}
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+var _ = Describe("Info", LMisc, func() {
+	It("succeeds", func() {
+		out, err := env.Epinio("", "info")
+		Expect(err).ToNot(HaveOccurred(), out)
+		Expect(out).To(ContainSubstring(`Epinio Environment`))
+		Expect(out).To(ContainSubstring(`Platform: `))
+		Expect(out).To(ContainSubstring(`Kubernetes Version: `))
+		Expect(out).To(ContainSubstring(`Epinio Server Version: `))
+		Expect(out).To(ContainSubstring(`Epinio Client Version: `))
+	})
+})

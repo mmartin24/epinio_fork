@@ -89,111 +89,112 @@ var Routes = routes.NamedRoutes{
 
 	// app controller files see application/*.go
 
-	"AllApps":         get("/applications", errorHandler(application.Controller{}.FullIndex)),
-	"Apps":            get("/namespaces/:namespace/applications", errorHandler(application.Controller{}.Index)),
-	"AppCreate":       post("/namespaces/:namespace/applications", errorHandler(application.Controller{}.Create)),
-	"AppShow":         get("/namespaces/:namespace/applications/:app", errorHandler(application.Controller{}.Show)),
-	"StagingComplete": get("/namespaces/:namespace/staging/:stage_id/complete", errorHandler(application.Controller{}.Staged)), // See stage.go
-	"AppDelete":       delete("/namespaces/:namespace/applications/:app", errorHandler(application.Controller{}.Delete)),
-	"AppBatchDelete":  delete("/namespaces/:namespace/applications", errorHandler(application.Controller{}.Delete)),
-	"AppDeploy":       post("/namespaces/:namespace/applications/:app/deploy", errorHandler(application.Controller{}.Deploy)),
-	"AppImportGit":    post("/namespaces/:namespace/applications/:app/import-git", errorHandler(application.Controller{}.ImportGit)),
-	"AppPart":         get("/namespaces/:namespace/applications/:app/part/:part", errorHandler(application.Controller{}.GetPart)),
-	"AppRestart":      post("/namespaces/:namespace/applications/:app/restart", errorHandler(application.Controller{}.Restart)),
-	"AppRunning":      get("/namespaces/:namespace/applications/:app/running", errorHandler(application.Controller{}.Running)),
-	"AppStage":        post("/namespaces/:namespace/applications/:app/stage", errorHandler(application.Controller{}.Stage)), // See stage.go
-	"AppUpdate":       patch("/namespaces/:namespace/applications/:app", errorHandler(application.Controller{}.Update)),
-	"AppUpload":       post("/namespaces/:namespace/applications/:app/store", errorHandler(application.Controller{}.Upload)), // See upload.go
-	"AppValidateCV":   get("/namespaces/:namespace/applications/:app/validate-cv", errorHandler(application.Controller{}.ValidateChartValues)),
+	"AllApps":         get("/applications", errorHandler(application.FullIndex)),
+	"Apps":            get("/namespaces/:namespace/applications", errorHandler(application.Index)),
+	"AppCreate":       post("/namespaces/:namespace/applications", errorHandler(application.Create)),
+	"AppShow":         get("/namespaces/:namespace/applications/:app", errorHandler(application.Show)),
+	"StagingComplete": get("/namespaces/:namespace/staging/:stage_id/complete", errorHandler(application.Staged)), // See stage.go
+	"AppDelete":       delete("/namespaces/:namespace/applications/:app", errorHandler(application.Delete)),
+	"AppBatchDelete":  delete("/namespaces/:namespace/applications", errorHandler(application.Delete)),
+	"AppDeploy":       post("/namespaces/:namespace/applications/:app/deploy", errorHandler(application.Deploy)),
+	"AppImportGit":    post("/namespaces/:namespace/applications/:app/import-git", errorHandler(application.ImportGit)),
+	"AppPart":         get("/namespaces/:namespace/applications/:app/part/:part", errorHandler(application.GetPart)),
+	"AppRestart":      post("/namespaces/:namespace/applications/:app/restart", errorHandler(application.Restart)),
+	"AppRunning":      get("/namespaces/:namespace/applications/:app/running", errorHandler(application.Running)),
+	"AppStage":        post("/namespaces/:namespace/applications/:app/stage", errorHandler(application.Stage)), // See stage.go
+	"AppUpdate":       patch("/namespaces/:namespace/applications/:app", errorHandler(application.Update)),
+	"AppUpload":       post("/namespaces/:namespace/applications/:app/store", errorHandler(application.Upload)), // See upload.go
+	"AppValidateCV":   get("/namespaces/:namespace/applications/:app/validate-cv", errorHandler(application.ValidateChartValues)),
 
-	"AppMatch":  get("/namespaces/:namespace/appsmatches/:pattern", errorHandler(application.Controller{}.Match)),
-	"AppMatch0": get("/namespaces/:namespace/appsmatches", errorHandler(application.Controller{}.Match)),
+	"AppMatch":  get("/namespaces/:namespace/appsmatches/:pattern", errorHandler(application.Match)),
+	"AppMatch0": get("/namespaces/:namespace/appsmatches", errorHandler(application.Match)),
 
 	// See env.go
-	"EnvList": get("/namespaces/:namespace/applications/:app/environment", errorHandler(env.Controller{}.Index)),
+	"EnvList": get("/namespaces/:namespace/applications/:app/environment", errorHandler(env.Index)),
 
 	// Note, the second registration catches calls with an empty pattern!
-	"EnvMatch":  get("/namespaces/:namespace/applications/:app/environmentmatch/:pattern", errorHandler(env.Controller{}.Match)),
-	"EnvMatch0": get("/namespaces/:namespace/applications/:app/environmentmatch", errorHandler(env.Controller{}.Match)),
+	"EnvMatch":  get("/namespaces/:namespace/applications/:app/environmentmatch/:pattern", errorHandler(env.Match)),
+	"EnvMatch0": get("/namespaces/:namespace/applications/:app/environmentmatch", errorHandler(env.Match)),
 
-	"EnvSet":   post("/namespaces/:namespace/applications/:app/environment", errorHandler(env.Controller{}.Set)),
-	"EnvShow":  get("/namespaces/:namespace/applications/:app/environment/:env", errorHandler(env.Controller{}.Show)),
-	"EnvUnset": delete("/namespaces/:namespace/applications/:app/environment/:env", errorHandler(env.Controller{}.Unset)),
+	"EnvSet":   post("/namespaces/:namespace/applications/:app/environment", errorHandler(env.Set)),
+	"EnvShow":  get("/namespaces/:namespace/applications/:app/environment/:env", errorHandler(env.Show)),
+	"EnvUnset": delete("/namespaces/:namespace/applications/:app/environment/:env", errorHandler(env.Unset)),
 
 	// Bind and unbind configurations to/from applications, by means of configurationbindings in applications
 	"ConfigurationBindingCreate": post("/namespaces/:namespace/applications/:app/configurationbindings",
-		errorHandler(configurationbinding.Controller{}.Create)),
+		errorHandler(configurationbinding.Create)),
 	"ConfigurationBindingDelete": delete("/namespaces/:namespace/applications/:app/configurationbindings/:configuration",
-		errorHandler(configurationbinding.Controller{}.Delete)),
+		errorHandler(configurationbinding.Delete)),
 
 	// List, create, show and delete namespaces
-	"Namespaces":      get("/namespaces", errorHandler(namespace.Controller{}.Index)),
-	"NamespaceCreate": post("/namespaces", errorHandler(namespace.Controller{}.Create)),
-	"NamespaceDelete": delete("/namespaces/:namespace", errorHandler(namespace.Controller{}.Delete)),
-	"NamespaceShow":   get("/namespaces/:namespace", errorHandler(namespace.Controller{}.Show)),
+	"Namespaces":           get("/namespaces", errorHandler(namespace.Index)),
+	"NamespaceCreate":      post("/namespaces", errorHandler(namespace.Create)),
+	"NamespaceDelete":      delete("/namespaces/:namespace", errorHandler(namespace.Delete)),
+	"NamespaceBatchDelete": delete("/namespaces", errorHandler(namespace.Delete)),
+	"NamespaceShow":        get("/namespaces/:namespace", errorHandler(namespace.Show)),
 
 	// Note, the second registration catches calls with an empty pattern!
-	"NamespacesMatch":  get("/namespacematches/:pattern", errorHandler(namespace.Controller{}.Match)),
-	"NamespacesMatch0": get("/namespacematches", errorHandler(namespace.Controller{}.Match)),
+	"NamespacesMatch":  get("/namespacematches/:pattern", errorHandler(namespace.Match)),
+	"NamespacesMatch0": get("/namespacematches", errorHandler(namespace.Match)),
 
 	// List, show, create and delete configurations
-	"ConfigurationApps": get("/namespaces/:namespace/configurationapps", errorHandler(configuration.Controller{}.ConfigurationApps)),
+	"ConfigurationApps": get("/namespaces/:namespace/configurationapps", errorHandler(configuration.ConfigurationApps)),
 	//
-	"AllConfigurations":        get("/configurations", errorHandler(configuration.Controller{}.FullIndex)),
-	"Configurations":           get("/namespaces/:namespace/configurations", errorHandler(configuration.Controller{}.Index)),
-	"ConfigurationShow":        get("/namespaces/:namespace/configurations/:configuration", errorHandler(configuration.Controller{}.Show)),
-	"ConfigurationCreate":      post("/namespaces/:namespace/configurations", errorHandler(configuration.Controller{}.Create)),
-	"ConfigurationBatchDelete": delete("/namespaces/:namespace/configurations", errorHandler(configuration.Controller{}.Delete)),
-	"ConfigurationDelete":      delete("/namespaces/:namespace/configurations/:configuration", errorHandler(configuration.Controller{}.Delete)),
-	"ConfigurationUpdate":      patch("/namespaces/:namespace/configurations/:configuration", errorHandler(configuration.Controller{}.Update)),
-	"ConfigurationReplace":     put("/namespaces/:namespace/configurations/:configuration", errorHandler(configuration.Controller{}.Replace)),
+	"AllConfigurations":        get("/configurations", errorHandler(configuration.FullIndex)),
+	"Configurations":           get("/namespaces/:namespace/configurations", errorHandler(configuration.Index)),
+	"ConfigurationShow":        get("/namespaces/:namespace/configurations/:configuration", errorHandler(configuration.Show)),
+	"ConfigurationCreate":      post("/namespaces/:namespace/configurations", errorHandler(configuration.Create)),
+	"ConfigurationBatchDelete": delete("/namespaces/:namespace/configurations", errorHandler(configuration.Delete)),
+	"ConfigurationDelete":      delete("/namespaces/:namespace/configurations/:configuration", errorHandler(configuration.Delete)),
+	"ConfigurationUpdate":      patch("/namespaces/:namespace/configurations/:configuration", errorHandler(configuration.Update)),
+	"ConfigurationReplace":     put("/namespaces/:namespace/configurations/:configuration", errorHandler(configuration.Replace)),
 
-	"ConfigurationMatch":  get("/namespaces/:namespace/configurationsmatches/:pattern", errorHandler(configuration.Controller{}.Match)),
-	"ConfigurationMatch0": get("/namespaces/:namespace/configurationsmatches", errorHandler(configuration.Controller{}.Match)),
+	"ConfigurationMatch":  get("/namespaces/:namespace/configurationsmatches/:pattern", errorHandler(configuration.Match)),
+	"ConfigurationMatch0": get("/namespaces/:namespace/configurationsmatches", errorHandler(configuration.Match)),
 
 	// Service Catalog
-	"ServiceCatalog":     get("/catalogservices", errorHandler(service.Controller{}.Catalog)),
-	"ServiceCatalogShow": get("/catalogservices/:catalogservice", errorHandler(service.Controller{}.CatalogShow)),
+	"ServiceCatalog":     get("/catalogservices", errorHandler(service.Catalog)),
+	"ServiceCatalogShow": get("/catalogservices/:catalogservice", errorHandler(service.CatalogShow)),
 
 	// Note, the second registration catches calls with an empty pattern!
-	"ServiceCatalogMatch":  get("catalogservicesmatches/:pattern", errorHandler(service.Controller{}.CatalogMatch)),
-	"ServiceCatalogMatch0": get("catalogservicesmatches", errorHandler(service.Controller{}.CatalogMatch)),
+	"ServiceCatalogMatch":  get("catalogservicesmatches/:pattern", errorHandler(service.CatalogMatch)),
+	"ServiceCatalogMatch0": get("catalogservicesmatches", errorHandler(service.CatalogMatch)),
 
 	// Services
-	"ServiceApps": get("/namespaces/:namespace/serviceapps", errorHandler(service.Controller{}.ServiceApps)),
+	"ServiceApps": get("/namespaces/:namespace/serviceapps", errorHandler(service.ServiceApps)),
 	//
-	"AllServices":        get("/services", errorHandler(service.Controller{}.FullIndex)),
-	"ServiceCreate":      post("/namespaces/:namespace/services", errorHandler(service.Controller{}.Create)),
-	"ServiceList":        get("/namespaces/:namespace/services", errorHandler(service.Controller{}.List)),
-	"ServiceShow":        get("/namespaces/:namespace/services/:service", errorHandler(service.Controller{}.Show)),
-	"ServiceDelete":      delete("/namespaces/:namespace/services/:service", errorHandler(service.Controller{}.Delete)),
-	"ServiceBatchDelete": delete("/namespaces/:namespace/services", errorHandler(service.Controller{}.Delete)),
+	"AllServices":        get("/services", errorHandler(service.FullIndex)),
+	"ServiceCreate":      post("/namespaces/:namespace/services", errorHandler(service.Create)),
+	"ServiceList":        get("/namespaces/:namespace/services", errorHandler(service.List)),
+	"ServiceShow":        get("/namespaces/:namespace/services/:service", errorHandler(service.Show)),
+	"ServiceDelete":      delete("/namespaces/:namespace/services/:service", errorHandler(service.Delete)),
+	"ServiceBatchDelete": delete("/namespaces/:namespace/services", errorHandler(service.Delete)),
 
-	"ServiceMatch":  get("/namespaces/:namespace/servicesmatches/:pattern", errorHandler(service.Controller{}.Match)),
-	"ServiceMatch0": get("/namespaces/:namespace/servicesmatches", errorHandler(service.Controller{}.Match)),
+	"ServiceMatch":  get("/namespaces/:namespace/servicesmatches/:pattern", errorHandler(service.Match)),
+	"ServiceMatch0": get("/namespaces/:namespace/servicesmatches", errorHandler(service.Match)),
 
 	// Bind a service to/from applications
 	"ServiceBind": post(
 		"/namespaces/:namespace/services/:service/bind",
-		errorHandler(service.Controller{}.Bind)),
+		errorHandler(service.Bind)),
 
 	// Unbind a service to/from applications
 	"ServiceUnbind": post(
 		"/namespaces/:namespace/services/:service/unbind",
-		errorHandler(service.Controller{}.Unbind)),
+		errorHandler(service.Unbind)),
 
 	// App charts
-	"ChartList":   get("/appcharts", errorHandler(appchart.Controller{}.Index)),
-	"ChartMatch":  get("/appchartsmatch/:pattern", errorHandler(appchart.Controller{}.Match)),
-	"ChartMatch0": get("/appchartsmatch", errorHandler(appchart.Controller{}.Match)),
-	"ChartShow":   get("/appcharts/:name", errorHandler(appchart.Controller{}.Show)),
+	"ChartList":   get("/appcharts", errorHandler(appchart.Index)),
+	"ChartMatch":  get("/appchartsmatch/:pattern", errorHandler(appchart.Match)),
+	"ChartMatch0": get("/appchartsmatch", errorHandler(appchart.Match)),
+	"ChartShow":   get("/appcharts/:name", errorHandler(appchart.Show)),
 }
 
 var WsRoutes = routes.NamedRoutes{
-	"AppExec":        get("/namespaces/:namespace/applications/:app/exec", errorHandler(application.Controller{}.Exec)),
-	"AppPortForward": get("/namespaces/:namespace/applications/:app/portforward", errorHandler(application.Controller{}.PortForward)),
-	"AppLogs":        get("/namespaces/:namespace/applications/:app/logs", application.Controller{}.Logs),
-	"StagingLogs":    get("/namespaces/:namespace/staging/:stage_id/logs", application.Controller{}.Logs),
+	"AppExec":        get("/namespaces/:namespace/applications/:app/exec", errorHandler(application.Exec)),
+	"AppPortForward": get("/namespaces/:namespace/applications/:app/portforward", errorHandler(application.PortForward)),
+	"AppLogs":        get("/namespaces/:namespace/applications/:app/logs", application.Logs),
+	"StagingLogs":    get("/namespaces/:namespace/staging/:stage_id/logs", application.Logs),
 }
 
 // Lemon extends the specified router with the methods and urls

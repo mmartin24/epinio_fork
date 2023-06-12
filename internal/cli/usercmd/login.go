@@ -74,7 +74,41 @@ func (c *EpinioClient) Login(ctx context.Context, username, password, address st
 	c.ui.Success().Msg("Login successful")
 
 	err = updatedSettings.Save()
-	return errors.Wrap(err, "error saving new settings")
+	if err != nil {
+		return errors.Wrap(err, "error saving new settings")
+	}
+
+	// Verify that the targeted namespace (if any) exists in the targeted cluster.
+	// If not report the issue, clear the information, and ask the user to chose a proper namespace.
+
+	if updatedSettings.Namespace != "" {
+		// Note: Create a new client for this. `c` cannot be assumed to be properly initialized,
+		// as it was created before the login was performed and saved.
+
+		client, err := New(ctx)
+		if err != nil {
+			return err
+		}
+
+		// we don't need anything, just checking if the namespace exist and we have permissions
+		_, err = client.API.NamespaceShow(updatedSettings.Namespace)
+		if err != nil {
+			c.ui.Exclamation().Msgf("Current namespace '%s' not found in targeted cluster",
+				updatedSettings.Namespace)
+
+			updatedSettings.Namespace = ""
+
+			err = updatedSettings.Save()
+			if err != nil {
+				return errors.Wrap(err, "error saving new settings")
+			}
+
+			c.ui.Exclamation().Msg("Cleared current namespace")
+			c.ui.Exclamation().Msg("Please use `epinio target` to chose a new current namespace")
+		}
+	}
+
+	return nil
 }
 
 func askUsername(ui *termui.UI) (string, error) {
@@ -137,8 +171,13 @@ func checkAndAskCA(ui *termui.UI, addresses []string, trustCA bool) (string, err
 			if cert == nil {
 				return "", errors.Wrap(err, "error while checking CA")
 			}
-			// add the untrusted certificate
+			// add the untrusted certificate to the list to check
 			certsToCheck = append(certsToCheck, cert)
+		} else {
+			// and regularly trusted certs go directly into the result
+			// This was missing in PR #1964, and demonstrated as bug with issue #2003
+			pemCert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+			builder.Write(pemCert)
 		}
 	}
 
@@ -261,6 +300,9 @@ func updateSettings(address, username, password, serverCertificate string) (*set
 	epinioSettings.User = username
 	epinioSettings.Password = password
 	epinioSettings.Certs = serverCertificate
+
+	// Clear any previous oidc login settings
+	epinioSettings.Token = settings.TokenSetting{}
 
 	return epinioSettings, nil
 }

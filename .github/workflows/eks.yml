@@ -23,39 +23,28 @@ on:
     - cron:  '0 4 * * *'
   workflow_dispatch:
     inputs:
-      aws_id:
-        description: "AWS_ACCESS_KEY_ID"
-        required: false
-        default: ""
-      aws_key:
-        description: "AWS_SECRET_ACCESS_KEY"
-        required: false
-        default: ""
-      aws_domain:
-        description: "AWS_DOMAIN to use, managed via Route53's AWS_ZONE_ID"
-        required: false
-        default: ""
-      aws_zone_id:
-        description: "AWS_ZONE_ID"
-        required: false
-        default: ""
       keep_cluster:
-        description: "Keep the cluster afterwards? (empty/yes)"
-        required: false
-        default: ""
+        type: choice
+        description: "Keep the cluster afterwards?"
+        required: true
+        default: 'Delete'
+        options:
+        - Delete
+        - Keep
 
 env:
-  SETUP_GO_VERSION: '^1.18'
+  SETUP_GO_VERSION: '1.20.4'
+  GOLANGCI_LINT_VERSION: v1.52
   GINKGO_NODES: 1
   FLAKE_ATTEMPTS: 1
   PUBLIC_CLOUD: 1
-  AWS_REGION: 'eu-central-1'
+  KUBECONFIG: ${{ github.workspace }}/kubeconfig-epinio-ci
+  EKS_REGION: ${{ secrets.EKS_REGION }}
   AWS_MACHINE_TYPE: 't3.xlarge'
-  KUBECONFIG_NAME: 'kubeconfig-epinio-ci'
 
 jobs:
   linter:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -64,8 +53,10 @@ jobs:
           submodules: recursive
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Cache Tools
@@ -82,11 +73,12 @@ jobs:
           echo "`pwd`/output/bin" >> $GITHUB_PATH
 
       - name: Lint Epinio
-        run: make lint
-
-      - name: Clean all
-        if: always()
-        uses: colpal/actions-clean@v1
+        uses: golangci/golangci-lint-action@v3.4.0
+        timeout-minutes: 10
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --timeout=10m --skip-files docs.go
+          skip-cache: true
 
   acceptance-scenario4:
     needs:
@@ -101,12 +93,13 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Install Dependencies
         run: |
@@ -121,32 +114,30 @@ jobs:
           sudo mv eksctl /usr/local/bin
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1.7.0
+        uses: aws-actions/configure-aws-credentials@v2.1.0
         with:
-          aws-access-key-id: ${{ github.event.inputs.aws_id || secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ github.event.inputs.aws_key || secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.EKS_REGION }}
 
       - name: Create EKS cluster
         id: create-cluster
         run: |
           id=$RANDOM
           echo "ID=$id" >> $GITHUB_OUTPUT
+          echo "RUN_ID: $id"
           eksctl create cluster --name=epinio-ci$id \
-          --region=${{ env.AWS_REGION }} \
+          --region=${{ env.EKS_REGION }} \
           --nodes=2 \
           --node-type=${{ env.AWS_MACHINE_TYPE }} \
           --node-volume-size=40 \
           --managed \
-          --kubeconfig=kubeconfig-epinio-ci
-          # Workaround for https://github.com/aws/aws-cli/issues/6920
-          # https://stackoverflow.com/questions/71318743/kubectl-versions-error-exec-plugin-is-configured-to-use-api-version-client-auth
-          sed -i .bak -e 's/v1alpha1/v1beta1/' kubeconfig-epinio-ci
+          --kubeconfig=${{ env.KUBECONFIG }}
 
       - name: Configure EKS EBS CSI storage
         id: configure-storage
         run: |
-          id="${{ steps.create-cluster.outputs.ID }}"
+          id=${{ steps.create-cluster.outputs.ID }}
           # Get AWS Account ID
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity | jq -r '.Account')
           # Assign OIDC provider to the cluster
@@ -170,31 +161,30 @@ jobs:
           REGEX: Scenario4
           REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
-          AWS_ZONE_ID: ${{ github.event.inputs.aws_zone_id || secrets.AWS_ZONE_ID }}
-          AWS_ACCESS_KEY_ID: ${{ github.event.inputs.aws_id || secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ github.event.inputs.aws_key || secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_ZONE_ID: ${{ secrets.AWS_ZONE_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           # Use a random host name, so we don't collide with our workflows on EKS
-          AWS_DOMAIN: id${{ steps.create-cluster.outputs.ID }}-${{ github.event.inputs.aws_domain || secrets.AWS_DOMAIN }}
-          EPINIO_SYSTEM_DOMAIN: id${{ steps.create-cluster.outputs.ID }}-${{ github.event.inputs.aws_domain || secrets.AWS_DOMAIN }}
+          AWS_DOMAIN: id${{ steps.create-cluster.outputs.ID }}-${{ secrets.AWS_DOMAIN }}
+          EPINIO_SYSTEM_DOMAIN: id${{ steps.create-cluster.outputs.ID }}-${{ secrets.AWS_DOMAIN }}
           EPINIO_TIMEOUT_MULTIPLIER: 3
           INGRESS_CONTROLLER: nginx
           # EXTRAENV_NAME: SESSION_KEY
           # EXTRAENV_VALUE: 12345
         run: |
           echo "System Domain: $AWS_DOMAIN"
-          export KUBECONFIG=$PWD/${{ env.KUBECONFIG_NAME }}
+          export KUBECONFIG=${{ env.KUBECONFIG }}
           make test-acceptance-install
 
       - name: Delete EKS cluster
         # We always tear down the cluster, to avoid costs. Except when running
-        # manually and keep_cluster was set to a non-empty string, like "yes"
-        # TODO this was not called, when scheduled and tests failed
-        if: ${{ always() && !github.event.inputs.keep_cluster }}
-        env:
-          KUBECONFIG: ${{ env.KUBECONFIG_NAME }}
+        # manually and keep_cluster was set to "Keep"
+        if: ${{ always() && github.event.inputs.keep_cluster != 'Keep' }}
         run: |
-          # Deleting namespaces will also remove PVs from EC2/EBS
-          id="${{ steps.create-cluster.outputs.ID }}"
-          kubectl delete namespace epinio || true
-          kubectl delete namespace workspace || true
-          eksctl delete cluster --region=${{ env.AWS_REGION }} --name=epinio-ci$id
+          export RUN_ID=${{ steps.create-cluster.outputs.ID }}
+          export RUN_PCP="EKS"
+          export AWS_ZONE_ID=${{ secrets.AWS_ZONE_ID }}
+          export EKS_DOMAIN=${{ secrets.EKS_DOMAIN }}
+          export EKS_REGION=${{ env.EKS_REGION }}
+          export KUBECONFIG=${{ env.KUBECONFIG }}
+          go run acceptance/helpers/delete_clusters/delete_clusters.go

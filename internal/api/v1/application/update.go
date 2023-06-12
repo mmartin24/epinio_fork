@@ -12,6 +12,7 @@
 package application
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -25,16 +26,18 @@ import (
 	apierror "github.com/epinio/epinio/pkg/api/core/v1/errors"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
 	"github.com/gin-gonic/gin"
+	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
 // Update handles the API endpoint PATCH /namespaces/:namespace/applications/:app
-func (hc Controller) Update(c *gin.Context) apierror.APIErrors { // nolint:gocyclo // simplification defered
+func Update(c *gin.Context) apierror.APIErrors { // nolint:gocyclo // simplification defered
 	ctx := c.Request.Context()
 	namespace := c.Param("namespace")
 	appName := c.Param("app")
 	username := requestctx.User(ctx).Username
+	log := requestctx.Logger(ctx)
 
 	cluster, err := kubernetes.GetCluster(ctx)
 	if err != nil {
@@ -59,6 +62,8 @@ func (hc Controller) Update(c *gin.Context) apierror.APIErrors { // nolint:gocyc
 		return apierror.NewBadRequestError(err.Error())
 	}
 
+	log.Info("updating app", "namespace", namespace, "app", appName, "request", updateRequest)
+
 	if updateRequest.Instances != nil && *updateRequest.Instances < 0 {
 		return apierror.NewBadRequestError("instances param should be integer equal or greater than zero")
 	}
@@ -77,6 +82,8 @@ func (hc Controller) Update(c *gin.Context) apierror.APIErrors { // nolint:gocyc
 		updateRequest.Configurations == nil &&
 		updateRequest.Routes == nil &&
 		updateRequest.AppChart == "" {
+
+		log.Info("updating app -- no changes")
 		response.OK(c)
 		return nil
 	}
@@ -142,23 +149,22 @@ func (hc Controller) Update(c *gin.Context) apierror.APIErrors { // nolint:gocyc
 				"value": "%s" }]`,
 			updateRequest.AppChart)
 
+		log.Info("updating app", "app chart patch", patch)
+
 		_, err = client.Namespace(app.Meta.Namespace).Patch(ctx, app.Meta.Name, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
 		if err != nil {
 			return apierror.InternalError(err)
 		}
 	}
 
-	if updateRequest.Instances != nil {
-		desired := *updateRequest.Instances
-
-		// Save to configuration
-		err := application.ScalingSet(ctx, cluster, app.Meta, desired)
-		if err != nil {
-			return apierror.InternalError(err)
-		}
+	desired, err := updateInstances(ctx, log, updateRequest.Instances, cluster, appRef)
+	if err != nil {
+		return apierror.InternalError(err)
 	}
 
 	if len(updateRequest.Environment) > 0 {
+		log.Info("updating app", "environment", updateRequest.Environment)
+
 		err := application.EnvironmentSet(ctx, cluster, app.Meta, updateRequest.Environment, true)
 		if err != nil {
 			return apierror.InternalError(err)
@@ -167,6 +173,8 @@ func (hc Controller) Update(c *gin.Context) apierror.APIErrors { // nolint:gocyc
 
 	if updateRequest.Configurations != nil {
 		var okToBind []string
+
+		log.Info("updating app", "configurations", updateRequest.Configurations)
 
 		if len(updateRequest.Configurations) > 0 {
 			for _, configurationName := range updateRequest.Configurations {
@@ -216,6 +224,8 @@ func (hc Controller) Update(c *gin.Context) apierror.APIErrors { // nolint:gocyc
 			"value": [%s] }]`,
 			strings.Join(routes, ","))
 
+		log.Info("updating app", "route patch", patch)
+
 		_, err = client.Namespace(app.Meta.Namespace).Patch(ctx, app.Meta.Name, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
 		if err != nil {
 			return apierror.InternalError(err)
@@ -240,6 +250,8 @@ func (hc Controller) Update(c *gin.Context) apierror.APIErrors { // nolint:gocyc
 			"value": {%s} }]`,
 			strings.Join(values, ","))
 
+		log.Info("updating app", "settings patch", patch)
+
 		_, err = client.Namespace(app.Meta.Namespace).Patch(ctx, app.Meta.Name, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
 		if err != nil {
 			return apierror.InternalError(err)
@@ -247,7 +259,12 @@ func (hc Controller) Update(c *gin.Context) apierror.APIErrors { // nolint:gocyc
 	}
 
 	// With everything saved, and a workload to update, re-deploy the changed state.
-	if app.Workload != nil {
+	// BEWARE if the application was scaled to zero it does not seem to have a workload
+	// (as there are no pods).
+
+	if app.Workload != nil || desired > 0 {
+		log.Info("updating app -- redeploy")
+
 		_, apierr := deploy.DeployApp(ctx, cluster, app.Meta, username, "", nil, nil)
 		if apierr != nil {
 			return apierr
@@ -256,4 +273,17 @@ func (hc Controller) Update(c *gin.Context) apierror.APIErrors { // nolint:gocyc
 
 	response.OK(c)
 	return nil
+}
+
+func updateInstances(ctx context.Context, log logr.Logger, instances *int32, cluster *kubernetes.Cluster, app models.AppRef) (int32, error) {
+	if instances == nil {
+		return 0, nil
+	}
+
+	desired := *instances
+	log.Info("updating app", "desired instances", desired)
+
+	// Save to configuration
+	err := application.ScalingSet(ctx, cluster, app, desired)
+	return desired, err
 }

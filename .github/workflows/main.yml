@@ -29,13 +29,14 @@ on:
     - cron:  '0 0 * * *'
 
 env:
-  SETUP_GO_VERSION: '^1.18'
+  SETUP_GO_VERSION: '1.20.4'
+  GOLANGCI_LINT_VERSION: v1.52
   GINKGO_NODES: 8
   INGRESS_CONTROLLER: traefik
 
 jobs:
   linter:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -45,38 +46,38 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Lint Epinio
-        run: make lint
+        uses: golangci/golangci-lint-action@v3.4.0
+        timeout-minutes: 10
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --timeout=10m --skip-files docs.go
+          skip-cache: true
 
       - name: Unit Tests
         run: make test
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      
+      - uses: actions/upload-artifact@v3
         with:
-          files: ./coverprofile.out
-          flags: unittests
-          name: codecov-epinio
-          verbose: true
-
-      - name: Clean all
-        if: always()
-        uses: colpal/actions-clean@v1
+          name: unittests
+          path: ./coverprofile.out
 
   acceptance-cli:
     needs:
       - linter
-    runs-on: self-hosted
+    runs-on: [self-hosted, epinio]
 
     env:
-      EPINIO_COVERAGE: true
+      GOCOVERDIR: /tmp
 
     steps:
       - name: Checkout
@@ -86,12 +87,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Cache Tools
         uses: actions/cache@v3
@@ -118,7 +121,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
           EPINIO_TIMEOUT_MULTIPLIER: 3
         run: |
-          rm -f /tmp/cover*
+          rm -f /tmp/cov*
           make acceptance-cluster-setup
           export KUBECONFIG=$PWD/tmp/acceptance-kubeconfig
           make install-cert-manager
@@ -126,13 +129,10 @@ jobs:
           make test-acceptance-cli-other
           scripts/collect-coverage.sh
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - uses: actions/upload-artifact@v3
         with:
-          files: ./coverprofile.out
-          flags: acceptance-cli
-          name: codecov-epinio
-          verbose: true
+          name: acceptance-cli
+          path: ./coverprofile.out
 
       - name: Cleanup k3d cluster
         if: always()
@@ -145,10 +145,10 @@ jobs:
   acceptance-cli-apps:
     needs:
       - linter
-    runs-on: self-hosted
+    runs-on: [self-hosted, epinio]
 
     env:
-      EPINIO_COVERAGE: true
+      GOCOVERDIR: /tmp
 
     steps:
       - name: Checkout
@@ -158,12 +158,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Cache Tools
         uses: actions/cache@v3
@@ -190,7 +192,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
           EPINIO_TIMEOUT_MULTIPLIER: 3
         run: |
-          rm -f /tmp/cover*
+          rm -f /tmp/cov*
           make acceptance-cluster-setup
           export KUBECONFIG=$PWD/tmp/acceptance-kubeconfig
           make install-cert-manager
@@ -198,13 +200,10 @@ jobs:
           make test-acceptance-cli-apps
           scripts/collect-coverage.sh
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - uses: actions/upload-artifact@v3
         with:
-          files: ./coverprofile.out
-          flags: acceptance-cli
-          name: codecov-epinio
-          verbose: true
+          name: acceptance-cli-apps
+          path: ./coverprofile.out
 
       - name: Cleanup k3d cluster
         if: always()
@@ -217,10 +216,10 @@ jobs:
   acceptance-cli-services:
     needs:
       - linter
-    runs-on: self-hosted
+    runs-on: [self-hosted, epinio]
 
     env:
-      EPINIO_COVERAGE: true
+      GOCOVERDIR: /tmp
 
     steps:
       - name: Checkout
@@ -230,12 +229,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Cache Tools
         uses: actions/cache@v3
@@ -262,7 +263,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
           EPINIO_TIMEOUT_MULTIPLIER: 3
         run: |
-          rm -f /tmp/cover*
+          rm -f /tmp/cov*
           make acceptance-cluster-setup
           export KUBECONFIG=$PWD/tmp/acceptance-kubeconfig
           make install-cert-manager
@@ -270,13 +271,10 @@ jobs:
           make test-acceptance-cli-services
           scripts/collect-coverage.sh
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - uses: actions/upload-artifact@v3
         with:
-          files: ./coverprofile.out
-          flags: acceptance-cli
-          name: codecov-epinio
-          verbose: true
+          name: acceptance-cli-services
+          path: ./coverprofile.out
 
       - name: Cleanup k3d cluster
         if: always()
@@ -290,10 +288,10 @@ jobs:
     needs:
       - linter
       - acceptance-api-services
-    runs-on: self-hosted
+    runs-on: [self-hosted, epinio]
 
     env:
-      EPINIO_COVERAGE: true
+      GOCOVERDIR: /tmp
 
     steps:
       - name: Checkout
@@ -303,12 +301,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Cache Tools
         uses: actions/cache@v3
@@ -335,7 +335,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
           EPINIO_TIMEOUT_MULTIPLIER: 3
         run: |
-          rm -f /tmp/cover*
+          rm -f /tmp/cov*
           make acceptance-cluster-setup
           export KUBECONFIG=$PWD/tmp/acceptance-kubeconfig
           make install-cert-manager
@@ -343,13 +343,10 @@ jobs:
           make test-acceptance-api-other
           scripts/collect-coverage.sh
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - uses: actions/upload-artifact@v3
         with:
-          files: ./coverprofile.out
-          flags: acceptance-api
-          name: codecov-epinio
-          verbose: true
+          name: acceptance-api
+          path: ./coverprofile.out
 
       - name: Cleanup k3d cluster
         if: always()
@@ -363,10 +360,10 @@ jobs:
     needs:
       - linter
       - acceptance-cli-services
-    runs-on: self-hosted
+    runs-on: [self-hosted, epinio]
 
     env:
-      EPINIO_COVERAGE: true
+      GOCOVERDIR: /tmp
 
     steps:
       - name: Checkout
@@ -376,12 +373,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Cache Tools
         uses: actions/cache@v3
@@ -408,7 +407,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
           EPINIO_TIMEOUT_MULTIPLIER: 3
         run: |
-          rm -f /tmp/cover*
+          rm -f /tmp/cov*
           make acceptance-cluster-setup
           export KUBECONFIG=$PWD/tmp/acceptance-kubeconfig
           make install-cert-manager
@@ -416,13 +415,10 @@ jobs:
           make test-acceptance-api-apps
           scripts/collect-coverage.sh
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - uses: actions/upload-artifact@v3
         with:
-          files: ./coverprofile.out
-          flags: acceptance-api
-          name: codecov-epinio
-          verbose: true
+          name: acceptance-api-apps
+          path: ./coverprofile.out
 
       - name: Cleanup k3d cluster
         if: always()
@@ -435,10 +431,10 @@ jobs:
   acceptance-api-services:
     needs:
       - linter
-    runs-on: self-hosted
+    runs-on: [self-hosted, epinio]
 
     env:
-      EPINIO_COVERAGE: true
+      GOCOVERDIR: /tmp
 
     steps:
       - name: Checkout
@@ -448,12 +444,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Cache Tools
         uses: actions/cache@v3
@@ -480,7 +478,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
           EPINIO_TIMEOUT_MULTIPLIER: 3
         run: |
-          rm -f /tmp/cover*
+          rm -f /tmp/cov*
           make acceptance-cluster-setup
           export KUBECONFIG=$PWD/tmp/acceptance-kubeconfig
           make install-cert-manager
@@ -488,13 +486,10 @@ jobs:
           make test-acceptance-api-services
           scripts/collect-coverage.sh
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - uses: actions/upload-artifact@v3
         with:
-          files: ./coverprofile.out
-          flags: acceptance-api
-          name: codecov-epinio
-          verbose: true
+          name: acceptance-api-services
+          path: ./coverprofile.out
 
       - name: Cleanup k3d cluster
         if: always()
@@ -508,10 +503,10 @@ jobs:
     needs:
       - linter
       - acceptance-cli
-    runs-on: self-hosted
+    runs-on: [self-hosted, epinio]
 
     env:
-      EPINIO_COVERAGE: true
+      GOCOVERDIR: /tmp
 
     steps:
       - name: Checkout
@@ -521,12 +516,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
+        timeout-minutes: 5
         with:
+          cache: false
           go-version: ${{ env.SETUP_GO_VERSION }}
 
       - name: Setup Ginkgo Test Framework
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.6.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.5
 
       - name: Cache Tools
         uses: actions/cache@v3
@@ -553,7 +550,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
           EPINIO_TIMEOUT_MULTIPLIER: 5
         run: |
-          rm -f /tmp/cover*
+          rm -f /tmp/cov*
           make acceptance-cluster-setup
           export KUBECONFIG=$PWD/tmp/acceptance-kubeconfig
           make install-cert-manager
@@ -561,13 +558,10 @@ jobs:
           make test-acceptance-apps
           scripts/collect-coverage.sh
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - uses: actions/upload-artifact@v3
         with:
-          files: ./coverprofile.out
-          flags: acceptance-apps
-          name: codecov-epinio
-          verbose: true
+          name: acceptance-apps
+          path: ./coverprofile.out
 
       - name: Failure Logs
         if: failure()
@@ -595,3 +589,55 @@ jobs:
       - name: Clean all
         if: always()
         uses: colpal/actions-clean@v1
+
+  upload-coverage:
+    needs:
+      - acceptance-api
+      - acceptance-api-apps
+      - acceptance-apps
+      - acceptance-cli-apps
+
+    runs-on: [self-hosted, epinio]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Upload unittests coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          name: codecov-epinio
+          files: ./unittests/coverprofile.out
+          flags: unittests
+          verbose: true
+          fail_ci_if_error: true
+
+      - name: Upload acceptance-api coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          name: codecov-epinio
+          files: ./acceptance-api/coverprofile.out,./acceptance-api-apps/coverprofile.out,./acceptance-api-services/coverprofile.out
+          flags: acceptance-api
+          verbose: true
+          fail_ci_if_error: true
+
+      - name: Upload acceptance-cli coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          name: codecov-epinio
+          files: ./acceptance-cli/coverprofile.out,./acceptance-cli-apps/coverprofile.out,./acceptance-cli-services/coverprofile.out
+          flags: acceptance-cli
+          verbose: true
+          fail_ci_if_error: true
+
+      - name: Upload acceptance-apps coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          name: codecov-epinio
+          files: ./acceptance-apps/coverprofile.out
+          flags: acceptance-apps
+          verbose: true
+          fail_ci_if_error: true

@@ -29,8 +29,6 @@ import (
 	apibatchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apiextensions "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -210,8 +208,8 @@ func (c *Cluster) IsJobFailed(ctx context.Context, jobName, namespace string) (b
 
 // IsJobDone returns a condition function that indicates whether the given
 // Job is done (Completed or Failed), or not
-func (c *Cluster) IsJobDone(ctx context.Context, client *typedbatchv1.BatchV1Client, jobName, namespace string) wait.ConditionFunc {
-	return func() (bool, error) {
+func (c *Cluster) IsJobDone(ctx context.Context, client *typedbatchv1.BatchV1Client, jobName, namespace string) wait.ConditionWithContextFunc {
+	return func(ctx context.Context) (bool, error) {
 		job, err := client.Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
 		if err != nil {
 			return false, err
@@ -228,15 +226,15 @@ func (c *Cluster) IsJobDone(ctx context.Context, client *typedbatchv1.BatchV1Cli
 	}
 }
 
-func (c *Cluster) NamespaceDoesNotExist(ctx context.Context, namespaceName string) wait.ConditionFunc {
-	return func() (bool, error) {
+func (c *Cluster) NamespaceDoesNotExist(ctx context.Context, namespaceName string) wait.ConditionWithContextFunc {
+	return func(ctx context.Context) (bool, error) {
 		exists, err := c.NamespaceExists(ctx, namespaceName)
 		return !exists, err
 	}
 }
 
-func (c *Cluster) PodDoesNotExist(ctx context.Context, namespace, selector string) wait.ConditionFunc {
-	return func() (bool, error) {
+func (c *Cluster) PodDoesNotExist(ctx context.Context, namespace, selector string) wait.ConditionWithContextFunc {
+	return func(ctx context.Context) (bool, error) {
 		podList, err := c.ListPods(ctx, namespace, selector)
 		if err != nil {
 			return true, nil
@@ -248,58 +246,13 @@ func (c *Cluster) PodDoesNotExist(ctx context.Context, namespace, selector strin
 	}
 }
 
-// WaitForCRD wait for a custom resource definition to exist in the cluster.
-// It will wait until the CRD reaches the condition "established".
-// This method should be used when installing a Deployment that is supposed to
-// provide that CRD and want to make sure the CRD is ready for consumption before
-// continuing deploying things that will consume it.
-func (c *Cluster) WaitForCRD(ctx context.Context, ui *termui.UI, CRDName string, timeout time.Duration) error {
-	s := ui.Progressf("Waiting for CRD %s to be ready to use", CRDName)
-	defer s.Stop()
-
-	clientset, err := apiextensions.NewForConfig(c.RestConfig)
-	if err != nil {
-		return err
-	}
-
-	err = wait.PollImmediate(time.Second, timeout, func() (bool, error) {
-		_, err = clientset.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, CRDName, metav1.GetOptions{})
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return false, nil
-			}
-			return false, err
-		}
-
-		return true, nil
-	})
-	if err != nil {
-		return err
-	}
-
-	// Now wait until the CRD is "established"
-	return wait.PollImmediate(time.Second, timeout, func() (bool, error) {
-		crd, err := clientset.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, CRDName, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-
-		for _, cond := range crd.Status.Conditions {
-			if cond.Type == apiextensionsv1.Established && cond.Status == apiextensionsv1.ConditionTrue {
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-}
-
 // WaitForSecret waits until the specified secret exists. If timeout is reached,
 // an error is returned.
 // It should be used when something is expected to create a Secret and the code
 // needs to wait until that happens.
 func (c *Cluster) WaitForSecret(ctx context.Context, namespace, secretName string, timeout time.Duration) (*v1.Secret, error) {
 	var secret *v1.Secret
-	waitErr := wait.PollImmediate(time.Second, timeout, func() (bool, error) {
+	waitErr := wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		var err error
 		secret, err = c.GetSecret(ctx, namespace, secretName)
 		if err != nil {
@@ -319,7 +272,8 @@ func (c *Cluster) WaitForJobDone(ctx context.Context, namespace, jobName string,
 	if err != nil {
 		return err
 	}
-	return wait.PollImmediate(time.Second, timeout, c.IsJobDone(ctx, client, jobName, namespace))
+
+	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, c.IsJobDone(ctx, client, jobName, namespace))
 }
 
 // ListPods returns the list of currently scheduled or running pods in `namespace` with the given selector
@@ -373,13 +327,13 @@ func (c *Cluster) WaitForNamespaceMissing(ctx context.Context, ui *termui.UI, na
 		defer s.Stop()
 	}
 
-	return wait.PollImmediate(time.Second, timeout, c.NamespaceDoesNotExist(ctx, namespace))
+	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, c.NamespaceDoesNotExist(ctx, namespace))
 }
 
 // Wait up to timeout for pod to be removed.
 // Returns an error if the pod is not removed within the allotted time.
 func (c *Cluster) WaitForPodBySelectorMissing(ctx context.Context, namespace, selector string, timeout time.Duration) error {
-	return wait.PollImmediate(time.Second, timeout, c.PodDoesNotExist(ctx, namespace, selector))
+	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, c.PodDoesNotExist(ctx, namespace, selector))
 }
 
 // GetConfigMap gets a configmap's values

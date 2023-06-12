@@ -13,6 +13,7 @@
 package usercmdfakes
 
 import (
+	"context"
 	"net/http"
 	"sync"
 
@@ -101,13 +102,14 @@ type FakeAPIClient struct {
 		result1 *models.DeployResponse
 		result2 error
 	}
-	AppExecStub        func(string, string, string, term.TTY) error
+	AppExecStub        func(context.Context, string, string, string, term.TTY) error
 	appExecMutex       sync.RWMutex
 	appExecArgsForCall []struct {
-		arg1 string
+		arg1 context.Context
 		arg2 string
 		arg3 string
-		arg4 term.TTY
+		arg4 string
+		arg5 term.TTY
 	}
 	appExecReturns struct {
 		result1 error
@@ -577,10 +579,10 @@ type FakeAPIClient struct {
 		result1 models.Response
 		result2 error
 	}
-	NamespaceDeleteStub        func(string) (models.Response, error)
+	NamespaceDeleteStub        func([]string) (models.Response, error)
 	namespaceDeleteMutex       sync.RWMutex
 	namespaceDeleteArgsForCall []struct {
-		arg1 string
+		arg1 []string
 	}
 	namespaceDeleteReturns struct {
 		result1 models.Response
@@ -1156,21 +1158,22 @@ func (fake *FakeAPIClient) AppDeployReturnsOnCall(i int, result1 *models.DeployR
 	}{result1, result2}
 }
 
-func (fake *FakeAPIClient) AppExec(arg1 string, arg2 string, arg3 string, arg4 term.TTY) error {
+func (fake *FakeAPIClient) AppExec(arg1 context.Context, arg2 string, arg3 string, arg4 string, arg5 term.TTY) error {
 	fake.appExecMutex.Lock()
 	ret, specificReturn := fake.appExecReturnsOnCall[len(fake.appExecArgsForCall)]
 	fake.appExecArgsForCall = append(fake.appExecArgsForCall, struct {
-		arg1 string
+		arg1 context.Context
 		arg2 string
 		arg3 string
-		arg4 term.TTY
-	}{arg1, arg2, arg3, arg4})
+		arg4 string
+		arg5 term.TTY
+	}{arg1, arg2, arg3, arg4, arg5})
 	stub := fake.AppExecStub
 	fakeReturns := fake.appExecReturns
-	fake.recordInvocation("AppExec", []interface{}{arg1, arg2, arg3, arg4})
+	fake.recordInvocation("AppExec", []interface{}{arg1, arg2, arg3, arg4, arg5})
 	fake.appExecMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2, arg3, arg4)
+		return stub(arg1, arg2, arg3, arg4, arg5)
 	}
 	if specificReturn {
 		return ret.result1
@@ -1184,17 +1187,17 @@ func (fake *FakeAPIClient) AppExecCallCount() int {
 	return len(fake.appExecArgsForCall)
 }
 
-func (fake *FakeAPIClient) AppExecCalls(stub func(string, string, string, term.TTY) error) {
+func (fake *FakeAPIClient) AppExecCalls(stub func(context.Context, string, string, string, term.TTY) error) {
 	fake.appExecMutex.Lock()
 	defer fake.appExecMutex.Unlock()
 	fake.AppExecStub = stub
 }
 
-func (fake *FakeAPIClient) AppExecArgsForCall(i int) (string, string, string, term.TTY) {
+func (fake *FakeAPIClient) AppExecArgsForCall(i int) (context.Context, string, string, string, term.TTY) {
 	fake.appExecMutex.RLock()
 	defer fake.appExecMutex.RUnlock()
 	argsForCall := fake.appExecArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5
 }
 
 func (fake *FakeAPIClient) AppExecReturns(result1 error) {
@@ -3365,15 +3368,20 @@ func (fake *FakeAPIClient) NamespaceCreateReturnsOnCall(i int, result1 models.Re
 	}{result1, result2}
 }
 
-func (fake *FakeAPIClient) NamespaceDelete(arg1 string) (models.Response, error) {
+func (fake *FakeAPIClient) NamespaceDelete(arg1 []string) (models.Response, error) {
+	var arg1Copy []string
+	if arg1 != nil {
+		arg1Copy = make([]string, len(arg1))
+		copy(arg1Copy, arg1)
+	}
 	fake.namespaceDeleteMutex.Lock()
 	ret, specificReturn := fake.namespaceDeleteReturnsOnCall[len(fake.namespaceDeleteArgsForCall)]
 	fake.namespaceDeleteArgsForCall = append(fake.namespaceDeleteArgsForCall, struct {
-		arg1 string
-	}{arg1})
+		arg1 []string
+	}{arg1Copy})
 	stub := fake.NamespaceDeleteStub
 	fakeReturns := fake.namespaceDeleteReturns
-	fake.recordInvocation("NamespaceDelete", []interface{}{arg1})
+	fake.recordInvocation("NamespaceDelete", []interface{}{arg1Copy})
 	fake.namespaceDeleteMutex.Unlock()
 	if stub != nil {
 		return stub(arg1)
@@ -3390,13 +3398,13 @@ func (fake *FakeAPIClient) NamespaceDeleteCallCount() int {
 	return len(fake.namespaceDeleteArgsForCall)
 }
 
-func (fake *FakeAPIClient) NamespaceDeleteCalls(stub func(string) (models.Response, error)) {
+func (fake *FakeAPIClient) NamespaceDeleteCalls(stub func([]string) (models.Response, error)) {
 	fake.namespaceDeleteMutex.Lock()
 	defer fake.namespaceDeleteMutex.Unlock()
 	fake.NamespaceDeleteStub = stub
 }
 
-func (fake *FakeAPIClient) NamespaceDeleteArgsForCall(i int) string {
+func (fake *FakeAPIClient) NamespaceDeleteArgsForCall(i int) []string {
 	fake.namespaceDeleteMutex.RLock()
 	defer fake.namespaceDeleteMutex.RUnlock()
 	argsForCall := fake.namespaceDeleteArgsForCall[i]

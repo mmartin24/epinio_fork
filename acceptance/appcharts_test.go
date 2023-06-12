@@ -41,7 +41,7 @@ var _ = Describe("apps chart", LAppchart, func() {
 			Expect(out).To(
 				HaveATable(
 					WithHeaders("DEFAULT", "NAME", "CREATED", "DESCRIPTION", "#SETTINGS"),
-					WithRow("standard", WithDate(), "Epinio standard deployment", "0"),
+					WithRow("standard", WithDate(), "Epinio standard deployment", "1"),
 					WithRow(chartName, WithDate(), "", "9"),
 				),
 			)
@@ -66,7 +66,7 @@ var _ = Describe("apps chart", LAppchart, func() {
 					WithRow("Helm Chart", "https.*epinio-application.*tgz"),
 				),
 			)
-			Expect(out).To(ContainSubstring("No settings"))
+			Expect(out).To(ContainSubstring("Settings"))
 		})
 
 		It("shows the details of the custom chart", func() {
@@ -153,4 +153,29 @@ var _ = Describe("apps chart", LAppchart, func() {
 			Expect(out).To(ContainSubstring("Name: not set, system default applies"))
 		})
 	})
+
+	for _, command := range []string{
+		"default",
+		"show",
+	} {
+		Context(command+" command completion", func() {
+			It("matches empty prefix", func() {
+				out, err := env.Epinio("", "__complete", "app", "chart", command, "")
+				Expect(err).ToNot(HaveOccurred(), out)
+				Expect(out).To(ContainSubstring(chartName))
+			})
+
+			It("does not match unknown prefix", func() {
+				out, err := env.Epinio("", "__complete", "app", "chart", command, "bogus")
+				Expect(err).ToNot(HaveOccurred(), out)
+				Expect(out).ToNot(ContainSubstring("bogus"))
+			})
+
+			It("does not match bogus arguments", func() {
+				out, err := env.Epinio("", "__complete", "app", "chart", command, chartName, "")
+				Expect(err).ToNot(HaveOccurred(), out)
+				Expect(out).ToNot(ContainSubstring(chartName))
+			})
+		})
+	}
 })

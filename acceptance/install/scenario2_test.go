@@ -55,6 +55,7 @@ var _ = Describe("<Scenario2> GKE, Letsencrypt-staging, Zero instance", func() {
 		instancesNum = "0"
 
 		flags = []string{
+			"--set", "server.disableTracking=true", // disable tracking during tests
 			"--set", "global.domain=" + domain,
 			"--set", "global.tlsIssuer=letsencrypt-staging",
 		}
@@ -202,16 +203,6 @@ var _ = Describe("<Scenario2> GKE, Letsencrypt-staging, Zero instance", func() {
 				"-o", "jsonpath='{.items[*].spec.issuerRef.name}'")
 			Expect(err).NotTo(HaveOccurred(), out)
 			Expect(out).To(Equal("'letsencrypt-staging'"))
-		})
-
-		By("Cleaning DNS Entries", func() {
-			change := route53.A(domain, loadbalancer, "DELETE")
-			out, err := route53.Update(zoneID, change, nodeTmpDir)
-			Expect(err).NotTo(HaveOccurred(), out)
-
-			change = route53.A("*."+domain, loadbalancer, "DELETE")
-			out, err = route53.Update(zoneID, change, nodeTmpDir)
-			Expect(err).NotTo(HaveOccurred(), out)
 		})
 	})
 })

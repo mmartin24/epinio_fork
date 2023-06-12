@@ -35,7 +35,7 @@ build: build-amd64
 
 # amd64 variant
 build-cover:
-	GOARCH="amd64" GOOS="linux" CGO_ENABLED=0 go test -c -covermode=count -coverpkg ./... -o dist/epinio-linux-amd64-coverage
+	GOARCH="amd64" GOOS="linux" CGO_ENABLED=0 go build -cover -covermode=count -coverpkg ./... $(BUILD_ARGS) -ldflags '$(LDFLAGS)' -o dist/epinio-linux-amd64
 
 build-win: build-windows
 
@@ -159,19 +159,19 @@ generate-cli-docs:
 	@./scripts/cli-docs-generate.sh ../docs/docs/references/commands/cli
 
 lint:
-	go vet ./...
+	golangci-lint run --skip-files docs.go
 
 tidy:
 	go mod tidy
 
 fmt:
-	go fmt ./...
-
-check:
-	golangci-lint run --skip-files docs.go
+	go fmt ./... ; git checkout -- internal/api/v1/docs/docs.go
 
 patch-epinio-deployment:
 	@./scripts/patch-epinio-deployment.sh
+
+appchart:
+	@./scripts/appchart.sh
 
 ########################################################################
 # Docs
