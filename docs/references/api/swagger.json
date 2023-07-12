@@ -1770,7 +1770,7 @@
         "settings": {
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/definitions/AppChartSetting"
+            "$ref": "#/definitions/ChartSetting"
           },
           "x-go-name": "Settings"
         },
@@ -1786,36 +1786,6 @@
       "type": "array",
       "items": {
         "$ref": "#/definitions/AppChart"
-      },
-      "x-go-package": "github.com/epinio/epinio/pkg/api/core/v1/models"
-    },
-    "AppChartSetting": {
-      "description": "AppChartSetting matches github.com/epinio/application/api/v1 AppChartSettings\nReason for existence: Do not expose the internal CRD struct in the API.",
-      "type": "object",
-      "properties": {
-        "enum": {
-          "description": "Enumeration of allowed values, for types string, number, integer",
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "x-go-name": "Enum"
-        },
-        "maximum": {
-          "description": "Maximal allowed value, for number, integer",
-          "type": "string",
-          "x-go-name": "Maximum"
-        },
-        "minimum": {
-          "description": "Minimal allowed value, for number, integer",
-          "type": "string",
-          "x-go-name": "Minimum"
-        },
-        "type": {
-          "description": "Type of the setting (string, bool, number, or integer)",
-          "type": "string",
-          "x-go-name": "Type"
-        }
       },
       "x-go-package": "github.com/epinio/epinio/pkg/api/core/v1/models"
     },
@@ -1912,14 +1882,6 @@
           "type": "string",
           "x-go-name": "Namespace"
         }
-      },
-      "x-go-package": "github.com/epinio/epinio/pkg/api/core/v1/models"
-    },
-    "AppSettings": {
-      "description": "AppSettings is a collection of key/value pairs describing the user's chosen settings with which\nto configure the helm chart referenced by the application's appchart.",
-      "type": "object",
-      "additionalProperties": {
-        "type": "string"
       },
       "x-go-package": "github.com/epinio/epinio/pkg/api/core/v1/models"
     },
@@ -2028,7 +1990,7 @@
           "x-go-name": "Routes"
         },
         "settings": {
-          "$ref": "#/definitions/AppSettings"
+          "$ref": "#/definitions/ChartValueSettings"
         }
       },
       "x-go-package": "github.com/epinio/epinio/pkg/api/core/v1/models"
@@ -2112,6 +2074,13 @@
           "type": "string",
           "x-go-name": "ServiceIcon"
         },
+        "settings": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/ChartSetting"
+          },
+          "x-go-name": "Settings"
+        },
         "short_description": {
           "type": "string",
           "x-go-name": "ShortDescription"
@@ -2142,6 +2111,44 @@
           },
           "x-go-name": "Names"
         }
+      },
+      "x-go-package": "github.com/epinio/epinio/pkg/api/core/v1/models"
+    },
+    "ChartSetting": {
+      "description": "ChartSetting matches github.com/epinio/application/api/v1 ChartSetting\nReason for existence: Do not expose the internal CRD struct in the API.",
+      "type": "object",
+      "properties": {
+        "enum": {
+          "description": "Enumeration of allowed values, for types string, number, integer",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "x-go-name": "Enum"
+        },
+        "maximum": {
+          "description": "Maximal allowed value, for number, integer",
+          "type": "string",
+          "x-go-name": "Maximum"
+        },
+        "minimum": {
+          "description": "Minimal allowed value, for number, integer",
+          "type": "string",
+          "x-go-name": "Minimum"
+        },
+        "type": {
+          "description": "Type of the setting (string, bool, number, or integer)",
+          "type": "string",
+          "x-go-name": "Type"
+        }
+      },
+      "x-go-package": "github.com/epinio/epinio/pkg/api/core/v1/models"
+    },
+    "ChartValueSettings": {
+      "description": "ChartValueSettings is a collection of key/value pairs describing the user's chosen settings with which\nto configure the helm chart referenced by the application's appchart.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
       },
       "x-go-package": "github.com/epinio/epinio/pkg/api/core/v1/models"
     },
@@ -2427,6 +2434,10 @@
         "blobuid": {
           "type": "string",
           "x-go-name": "BlobUID"
+        },
+        "branch": {
+          "type": "string",
+          "x-go-name": "Branch"
         }
       },
       "x-go-package": "github.com/epinio/epinio/pkg/api/core/v1/models"
@@ -2656,6 +2667,9 @@
         "name": {
           "type": "string",
           "x-go-name": "Name"
+        },
+        "settings": {
+          "$ref": "#/definitions/ChartValueSettings"
         },
         "wait": {
           "type": "boolean",
@@ -3087,6 +3101,9 @@
       "schema": {
         "$ref": "#/definitions/ServiceMatchResponse"
       }
+    },
+    "ServicePortForwardResponse": {
+      "description": ""
     },
     "ServiceShowResponse": {
       "description": "",

@@ -142,7 +142,7 @@ test-acceptance-cli-other: showfocus
 	ginkgo ${STANDARD_TEST_OPTIONS} --label-filter "!application && !service" acceptance/.
 
 test-acceptance-upgrade: showfocus
-	ginkgo ${STANDARD_TEST_OPTIONS} acceptance/upgrade/.
+	ginkgo ${STANDARD_TEST_OPTIONS} --focus "${REGEX}" acceptance/upgrade/.
 
 test-acceptance-install: showfocus
 	# TODO support for labels is coming in ginkgo v2
@@ -217,6 +217,12 @@ install-cert-manager:
 install-epinio-ui:
 	@./scripts/install-epinio-ui.sh
 
+install-rancher:
+	@./scripts/install-rancher.sh
+
+uninstall-rancher:
+	helm uninstall -n cattle-system rancher --wait || true
+
 install-upgrade-responder:
 	@./scripts/install-upgrade-responder.sh
 
@@ -229,3 +235,7 @@ prepare_environment_k3d: build-linux-amd64 build-images
 unprepare_environment_k3d:
 	kubectl delete --ignore-not-found=true secret regcred
 	helm uninstall epinio -n epinio --wait || true
+
+# Generate tests description file
+generate-acceptance-readme:
+	@./scripts/generate-readme acceptance > acceptance/README.md

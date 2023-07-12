@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/avast/retry-go"
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/util/httpstream"
@@ -34,10 +33,8 @@ import (
 	"k8s.io/client-go/transport"
 	gospdy "k8s.io/client-go/transport/spdy"
 
-	"github.com/epinio/epinio/helpers"
 	"github.com/epinio/epinio/helpers/kubernetes/tailer"
 	api "github.com/epinio/epinio/internal/api/v1"
-	"github.com/epinio/epinio/internal/duration"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
 	progressbar "github.com/schollz/progressbar/v3"
 	kubectlterm "k8s.io/kubectl/pkg/util/term"
@@ -74,80 +71,35 @@ func NewUpgrader(cfg spdy.RoundTripperConfig) *Upgrader {
 }
 
 // AppCreate creates an application resource
-func (c *Client) AppCreate(req models.ApplicationCreateRequest, namespace string) (models.Response, error) {
-	var resp models.Response
+func (c *Client) AppCreate(request models.ApplicationCreateRequest, namespace string) (models.Response, error) {
+	response := models.Response{}
+	endpoint := api.Routes.Path("AppCreate", namespace)
 
-	b, err := json.Marshal(req)
-	if err != nil {
-		return resp, nil
-	}
-
-	data, err := c.post(api.Routes.Path("AppCreate", namespace), string(b))
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Post(c, endpoint, request, response)
 }
 
 // Apps returns a list of all apps in an namespace
 func (c *Client) Apps(namespace string) (models.AppList, error) {
-	var resp models.AppList
+	response := models.AppList{}
+	endpoint := api.Routes.Path("Apps", namespace)
 
-	data, err := c.get(api.Routes.Path("Apps", namespace))
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
 // AllApps returns a list of all apps
 func (c *Client) AllApps() (models.AppList, error) {
-	var resp models.AppList
+	response := models.AppList{}
+	endpoint := api.Routes.Path("AllApps")
 
-	data, err := c.get(api.Routes.Path("AllApps"))
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
 // AppShow shows an app
 func (c *Client) AppShow(namespace string, appName string) (models.App, error) {
-	var resp models.App
+	response := models.App{}
+	endpoint := api.Routes.Path("AppShow", namespace, appName)
 
-	data, err := c.get(api.Routes.Path("AppShow", namespace, appName))
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
 // AppGetPart retrieves part of an app (values.yaml, chart, image)
@@ -161,11 +113,9 @@ func (c *Client) AppGetPart(namespace, appName, part, destinationPath string) er
 	uri := fmt.Sprintf("%s%s/%s", c.Settings.API, api.Root, endpoint)
 	c.log.Info(fmt.Sprintf("%s %s", method, uri))
 
-	reqLog := requestLogger(c.log, method, uri, requestBody)
-
 	request, err := http.NewRequest(method, uri, strings.NewReader(requestBody))
 	if err != nil {
-		reqLog.V(1).Error(err, "cannot build request")
+		c.log.V(1).Error(err, "cannot build request")
 		return err
 	}
 
@@ -173,6 +123,12 @@ func (c *Client) AppGetPart(namespace, appName, part, destinationPath string) er
 	if err != nil {
 		return errors.Wrap(err, "handling oauth2 request")
 	}
+
+	for key, value := range c.customHeaders {
+		request.Header.Set(key, value)
+	}
+
+	reqLog := requestLogger(c.log, request, requestBody)
 
 	response, err := c.HttpClient.Do(request)
 	if err != nil {
@@ -189,10 +145,7 @@ func (c *Client) AppGetPart(namespace, appName, part, destinationPath string) er
 	}
 
 	if response.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(response.Body)
-		return wrapResponseError(fmt.Errorf("server status code: %s\n%s",
-			http.StatusText(response.StatusCode), string(bodyBytes)),
-			response.StatusCode)
+		return handleError(c.log, response)
 	}
 
 	defer response.Body.Close()
@@ -227,64 +180,37 @@ func (c *Client) AppGetPart(namespace, appName, part, destinationPath string) er
 }
 
 // AppUpdate updates an app
-func (c *Client) AppUpdate(req models.ApplicationUpdateRequest, namespace string, appName string) (models.Response, error) {
-	var resp models.Response
+func (c *Client) AppUpdate(request models.ApplicationUpdateRequest, namespace string, appName string) (models.Response, error) {
+	response := models.Response{}
+	endpoint := api.Routes.Path("AppUpdate", namespace, appName)
 
-	b, err := json.Marshal(req)
-	if err != nil {
-		return resp, nil
-	}
-
-	data, err := c.patch(api.Routes.Path("AppUpdate", namespace, appName), string(b))
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Patch(c, endpoint, request, response)
 }
 
 // AppMatch returns all matching namespaces for the prefix
 func (c *Client) AppMatch(namespace, prefix string) (models.AppMatchResponse, error) {
-	resp := models.AppMatchResponse{}
+	response := models.AppMatchResponse{}
+	endpoint := api.Routes.Path("AppMatch", namespace, prefix)
 
-	data, err := c.get(api.Routes.Path("AppMatch", namespace, prefix))
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
 // AppDelete deletes an app
 func (c *Client) AppDelete(namespace string, names []string) (models.ApplicationDeleteResponse, error) {
-	resp := models.ApplicationDeleteResponse{}
+	response := models.ApplicationDeleteResponse{}
 
-	URL := constructApplicationBatchDeleteURL(namespace, names)
-
-	data, err := c.delete(URL)
-	if err != nil {
-		return resp, err
+	queryParams := url.Values{}
+	for _, appName := range names {
+		queryParams.Add("applications[]", appName)
 	}
 
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
+	endpoint := fmt.Sprintf(
+		"%s?%s",
+		api.Routes.Path("AppBatchDelete", namespace),
+		queryParams.Encode(),
+	)
 
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Delete(c, endpoint, nil, response)
 }
 
 // AppUpload uploads a tarball for the named app, which is later used in staging
@@ -307,20 +233,10 @@ func (c *Client) AppUpload(namespace string, name string, tarball string) (model
 
 // AppValidateCV validates the chart values of the specified app against its appchart
 func (c *Client) AppValidateCV(namespace string, name string) (models.Response, error) {
-	resp := models.Response{}
+	response := models.Response{}
+	endpoint := api.Routes.Path("AppValidateCV", namespace, name)
 
-	data, err := c.get(api.Routes.Path("AppValidateCV", namespace, name))
-	if err != nil {
-		return resp, errors.Wrap(err, "can't validate app")
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, errors.Wrap(err, "response body is not JSON")
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
 // AppImportGit asks the server to import a git repo and put in into the blob store
@@ -368,49 +284,19 @@ func (c *Client) AppImportGit(app models.AppRef, gitRef models.GitRef) (*models.
 }
 
 // AppStage stages an app
-func (c *Client) AppStage(req models.StageRequest) (*models.StageResponse, error) {
-	out, err := json.Marshal(req)
-	if err != nil {
-		return nil, errors.Wrap(err, "can't marshal stage request")
-	}
+func (c *Client) AppStage(request models.StageRequest) (*models.StageResponse, error) {
+	response := &models.StageResponse{}
+	endpoint := api.Routes.Path("AppStage", request.App.Namespace, request.App.Name)
 
-	b, err := c.post(api.Routes.Path("AppStage", req.App.Namespace, req.App.Name), string(out))
-	if err != nil {
-		return nil, errors.Wrap(err, "can't stage app")
-	}
-
-	// returns staging ID
-	resp := &models.StageResponse{}
-	if err := json.Unmarshal(b, resp); err != nil {
-		return nil, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Post(c, endpoint, request, response)
 }
 
 // AppDeploy deploys a staged app
-func (c *Client) AppDeploy(req models.DeployRequest) (*models.DeployResponse, error) {
-	out, err := json.Marshal(req)
-	if err != nil {
-		return nil, errors.Wrap(err, "can't marshal deploy request")
-	}
+func (c *Client) AppDeploy(request models.DeployRequest) (*models.DeployResponse, error) {
+	response := &models.DeployResponse{}
+	endpoint := api.Routes.Path("AppDeploy", request.App.Namespace, request.App.Name)
 
-	b, err := c.post(api.Routes.Path("AppDeploy", req.App.Namespace, req.App.Name), string(out))
-	if err != nil {
-		return nil, errors.Wrap(err, "can't deploy app")
-	}
-
-	// returns app default route
-	resp := &models.DeployResponse{}
-	if err := json.Unmarshal(b, resp); err != nil {
-		return nil, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Post(c, endpoint, request, response)
 }
 
 // AppLogs streams the logs of all the application instances, in the targeted namespace
@@ -444,14 +330,7 @@ func (c *Client) AppLogs(namespace, appName, stageID string, follow bool, printC
 	if err != nil {
 		// Report detailed error found in the server response
 		if resp != nil && resp.StatusCode != http.StatusOK {
-			defer resp.Body.Close()
-			bodyBytes, errBody := io.ReadAll(resp.Body)
-
-			if errBody != nil {
-				return errBody
-			}
-
-			return formatError(bodyBytes, resp)
+			return handleError(c.log, resp)
 		}
 
 		// Report the dialer error if response claimed to be OK
@@ -475,96 +354,18 @@ func (c *Client) AppLogs(namespace, appName, stageID string, follow bool, printC
 
 // StagingComplete checks if the staging process is complete
 func (c *Client) StagingComplete(namespace string, id string) (models.Response, error) {
-	resp := models.Response{}
+	response := models.Response{}
+	endpoint := api.Routes.Path("StagingComplete", namespace, id)
 
-	details := c.log.V(1)
-	var (
-		data []byte
-		err  error
-	)
-	err = retry.Do(
-		func() error {
-			data, err = c.get(api.Routes.Path("StagingComplete", namespace, id))
-			return err
-		},
-		retry.RetryIf(func(err error) bool {
-			// Bail out early when staging failed - Do not retry
-			if strings.Contains(err.Error(), "Failed to stage") {
-				return false
-			}
-			if r, ok := err.(interface{ StatusCode() int }); ok {
-				return helpers.RetryableCode(r.StatusCode())
-			}
-			retry := helpers.Retryable(err.Error())
-
-			details.Info("create error", "error", err.Error(), "retry", retry)
-			return retry
-		}),
-		retry.OnRetry(func(n uint, err error) {
-			details.WithValues(
-				"tries", fmt.Sprintf("%d/%d", n, duration.RetryMax),
-				"error", err.Error(),
-			).Info("Retrying StagingComplete")
-		}),
-		retry.Delay(time.Second),
-		retry.Attempts(duration.RetryMax),
-	)
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
 // AppRunning checks if the app is running
 func (c *Client) AppRunning(app models.AppRef) (models.Response, error) {
-	resp := models.Response{}
+	response := models.Response{}
+	endpoint := api.Routes.Path("AppRunning", app.Namespace, app.Name)
 
-	details := c.log.V(1)
-	var (
-		data []byte
-		err  error
-	)
-	err = retry.Do(
-		func() error {
-			data, err = c.get(api.Routes.Path("AppRunning", app.Namespace, app.Name))
-			return err
-		},
-		retry.RetryIf(func(err error) bool {
-			if r, ok := err.(interface{ StatusCode() int }); ok {
-				return helpers.RetryableCode(r.StatusCode())
-			}
-			retry := helpers.Retryable(err.Error())
-
-			details.Info("create error", "error", err.Error(), "retry", retry)
-			return retry
-		}),
-		retry.OnRetry(func(n uint, err error) {
-			details.WithValues(
-				"tries", fmt.Sprintf("%d/%d", n, duration.RetryMax),
-				"error", err.Error(),
-			).Info("Retrying AppRunning")
-		}),
-		retry.Delay(time.Second),
-		retry.Attempts(duration.RetryMax),
-	)
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
 func (c *Client) AppExec(ctx context.Context, namespace string, appName, instance string, tty kubectlterm.TTY) error {
@@ -693,25 +494,21 @@ func (c *Client) addAuthTokenToURL(url *url.URL) error {
 }
 
 // AppRestart restarts an app
-func (c *Client) AppRestart(namespace string, appName string) error {
+func (c *Client) AppRestart(namespace string, appName string) (models.Response, error) {
+	response := models.Response{}
 	endpoint := api.Routes.Path("AppRestart", namespace, appName)
 
-	if _, err := c.post(endpoint, ""); err != nil {
-		errorMsg := fmt.Sprintf("error restarting app %s in namespace %s", appName, namespace)
-		return errors.Wrap(err, errorMsg)
-	}
-
-	return nil
+	return Post(c, endpoint, nil, response)
 }
 
-func constructApplicationBatchDeleteURL(namespace string, names []string) string {
-	q := url.Values{}
-	for _, c := range names {
-		q.Add("applications[]", c)
+func (c *Client) AuthToken() (string, error) {
+	response := models.AuthTokenResponse{}
+	endpoint := api.Routes.Path("AuthToken")
+
+	tokenResponse, err := Get(c, endpoint, response)
+	if err != nil {
+		return "", err
 	}
-	URLParams := q.Encode()
 
-	URL := api.Routes.Path("AppBatchDelete", namespace)
-
-	return fmt.Sprintf("%s?%s", URL, URLParams)
+	return tokenResponse.Token, nil
 }

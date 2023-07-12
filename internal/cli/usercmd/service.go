@@ -12,13 +12,13 @@
 package usercmd
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
 	"sort"
 	"strings"
 
 	"github.com/epinio/epinio/helpers/termui"
-	apierrors "github.com/epinio/epinio/pkg/api/core/v1/errors"
+	"github.com/epinio/epinio/pkg/api/core/v1/client"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
 	"github.com/kyokomi/emoji"
 	"github.com/pkg/errors"
@@ -54,7 +54,7 @@ func (c *EpinioClient) ServiceCatalog() error {
 }
 
 // ServiceCatalogShow shows a service
-func (c *EpinioClient) ServiceCatalogShow(serviceName string) error {
+func (c *EpinioClient) ServiceCatalogShow(ctx context.Context, serviceName string) error {
 	log := c.Log.WithName("ServiceCatalog")
 	log.Info("start")
 	defer log.Info("return")
@@ -74,13 +74,18 @@ func (c *EpinioClient) ServiceCatalogShow(serviceName string) error {
 		WithTableRow("Version", catalogService.AppVersion).
 		WithTableRow("Short Description", catalogService.ShortDescription).
 		WithTableRow("Description", catalogService.Description).
+		WithTableRow("Helm Repository", catalogService.HelmRepo.URL).
+		WithTableRow("Helm Chart", catalogService.HelmChart).
 		Msg("Epinio Service:")
+
+	c.ChartSettingsShow(ctx, catalogService.Settings)
 
 	return nil
 }
 
 // ServiceCreate creates a service
-func (c *EpinioClient) ServiceCreate(catalogServiceName, serviceName string, wait bool) error {
+func (c *EpinioClient) ServiceCreate(catalogServiceName, serviceName string, wait bool,
+	chartValues models.ChartValueSettings) error {
 	log := c.Log.WithName("ServiceCreate")
 	log.Info("start")
 	defer log.Info("return")
@@ -91,13 +96,14 @@ func (c *EpinioClient) ServiceCreate(catalogServiceName, serviceName string, wai
 		WithBoolValue("Wait For Completion", wait).
 		Msg("Creating Service...")
 
-	request := &models.ServiceCreateRequest{
+	request := models.ServiceCreateRequest{
 		CatalogService: catalogServiceName,
 		Name:           serviceName,
 		Wait:           wait,
+		Settings:       chartValues,
 	}
 
-	err := c.API.ServiceCreate(request, c.Settings.Namespace)
+	_, err := c.API.ServiceCreate(request, c.Settings.Namespace)
 	// Note: errors.Wrap (nil, "...") == nil
 	return errors.Wrap(err, "service create failed")
 }
@@ -110,11 +116,7 @@ func (c *EpinioClient) ServiceShow(serviceName string) error {
 
 	c.ui.Note().Msg("Showing Service...")
 
-	request := &models.ServiceShowRequest{
-		Name: serviceName,
-	}
-
-	service, err := c.API.ServiceShow(request, c.Settings.Namespace)
+	service, err := c.API.ServiceShow(c.Settings.Namespace, serviceName)
 	if err != nil {
 		return errors.Wrap(err, "service show failed")
 	}
@@ -212,27 +214,24 @@ func (c *EpinioClient) ServiceDelete(serviceNames []string, unbind, all bool) er
 		return match.Names
 	})
 
-	_, err := c.API.ServiceDelete(request, c.Settings.Namespace, serviceNames,
-		func(response *http.Response, bodyBytes []byte, err error) error {
-			// nothing special for internal errors and the like
-			if response.StatusCode != http.StatusBadRequest {
-				return err
-			}
-
-			// A bad request happens when the configuration is still bound to one or
-			// more applications, and the response contains an array of their names.
-
-			var apiError apierrors.ErrorResponse
-			if err := json.Unmarshal(bodyBytes, &apiError); err != nil {
-				return err
-			}
-
-			bound = strings.Split(apiError.Errors[0].Details, ",")
-			return nil
-		})
-
+	_, err := c.API.ServiceDelete(request, c.Settings.Namespace, serviceNames)
 	if err != nil {
-		return errors.Wrap(err, "service deletion failed")
+		epinioAPIError := &client.APIError{}
+		// something bad happened
+		if !errors.As(err, &epinioAPIError) {
+			return errors.Wrap(err, "service deletion failed")
+		}
+
+		// the API error is something different from a bad request (500?). Do not handle.
+		if epinioAPIError.StatusCode != http.StatusBadRequest {
+			return err
+		}
+
+		// A bad request happens when the configuration is still bound to one or
+		// more applications, and the response contains an array of their names.
+
+		firstErr := epinioAPIError.Err.Errors[0]
+		bound = strings.Split(firstErr.Details, ",")
 	}
 
 	if len(bound) > 0 {
@@ -265,11 +264,11 @@ func (c *EpinioClient) ServiceBind(name, appName string) error {
 
 	c.ui.Note().Msg("Binding Service...")
 
-	request := &models.ServiceBindRequest{
+	request := models.ServiceBindRequest{
 		AppName: appName,
 	}
 
-	err := c.API.ServiceBind(request, c.Settings.Namespace, name)
+	_, err := c.API.ServiceBind(request, c.Settings.Namespace, name)
 	// Note: errors.Wrap (nil, "...") == nil
 	return errors.Wrap(err, "service bind failed")
 }
@@ -282,11 +281,11 @@ func (c *EpinioClient) ServiceUnbind(name, appName string) error {
 
 	c.ui.Note().Msg("Unbinding Service...")
 
-	request := &models.ServiceUnbindRequest{
+	request := models.ServiceUnbindRequest{
 		AppName: appName,
 	}
 
-	err := c.API.ServiceUnbind(request, c.Settings.Namespace, name)
+	_, err := c.API.ServiceUnbind(request, c.Settings.Namespace, name)
 	return errors.Wrap(err, "service unbind failed")
 }
 
@@ -431,4 +430,23 @@ func (c *EpinioClient) CatalogMatching(prefix string) []string {
 
 	log.Info("matches", "found", result)
 	return result
+}
+
+func (c *EpinioClient) ServicePortForward(ctx context.Context, serviceName string, address, ports []string) error {
+	log := c.Log.WithName("ServicePortForward")
+	log.Info("start")
+	defer log.Info("return")
+
+	msg := c.ui.Note().
+		WithStringValue("Namespace", c.Settings.Namespace).
+		WithStringValue("Service", serviceName)
+
+	msg.Msg("Executing port forwarding")
+
+	if err := c.TargetOk(); err != nil {
+		return err
+	}
+
+	opts := client.NewPortForwardOpts(address, ports)
+	return c.API.ServicePortForward(c.Settings.Namespace, serviceName, opts)
 }

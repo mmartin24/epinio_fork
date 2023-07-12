@@ -31,6 +31,8 @@ import (
 )
 
 func NginxCatalogService(name string) models.CatalogService {
+	values := `{"service": {"type": "ClusterIP"}}`
+
 	return models.CatalogService{
 		Meta: models.MetaLite{
 			Name: name,
@@ -40,7 +42,15 @@ func NginxCatalogService(name string) models.CatalogService {
 			Name: "",
 			URL:  "https://charts.bitnami.com/bitnami",
 		},
-		Values: "{'service': {'type': 'ClusterIP'}}",
+		Values: values,
+		Settings: map[string]models.ChartSetting{
+			"ingress.enabled": {
+				Type: "bool",
+			},
+			"ingress.hostname": {
+				Type: "string",
+			},
+		},
 	}
 }
 
@@ -81,6 +91,18 @@ func DeleteCatalogServiceFromNamespace(namespace, name string) {
 
 // Create temp file to hold the catalog service formatted as yaml, and return the path
 func SampleServiceTmpFile(namespace string, catalogService models.CatalogService) string {
+
+	// Convert from internal model to CRD structure
+	settings := map[string]epinioappv1.ChartSetting{}
+	for key, value := range catalogService.Settings {
+		settings[key] = epinioappv1.ChartSetting{
+			Type:    value.Type,
+			Minimum: value.Minimum,
+			Maximum: value.Maximum,
+			Enum:    value.Enum,
+		}
+	}
+
 	srv := epinioappv1.Service{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: epinioappv1.GroupVersion.String(),
@@ -98,7 +120,17 @@ func SampleServiceTmpFile(namespace string, catalogService models.CatalogService
 			},
 			HelmChart: catalogService.HelmChart,
 			Values:    catalogService.Values,
+			Settings:  settings,
 		},
+	}
+
+	// Check if the installed Epinio version has compatible CRD deployed
+	out, err := proc.Kubectl("get", "crd", "services.application.epinio.io", "-o", `jsonpath='{..properties.settings}'`)
+	Expect(err).ToNot(HaveOccurred(), out)
+
+	// Delete the Spec.Settings key if the kubectl output is empty - the CRD is not compatible then
+	if string(out) == "''" {
+		srv.Spec.Settings = nil
 	}
 
 	if len(catalogService.SecretTypes) > 0 {

@@ -23,12 +23,15 @@ import (
 	"github.com/epinio/epinio/internal/names"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
 	"github.com/pkg/errors"
+	"gopkg.in/yaml.v2"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 
 	helmapiv1 "github.com/k3s-io/helm-controller/pkg/apis/helm.cattle.io/v1"
+	"helm.sh/helm/v3/pkg/chartutil"
 	helmdriver "helm.sh/helm/v3/pkg/storage/driver"
+	"helm.sh/helm/v3/pkg/strvals"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -101,7 +104,7 @@ func (s *ServiceClient) Get(ctx context.Context, namespace, name string) (*model
 		}
 	}
 
-	service.Status = models.NewServiceStatusFromHelmRelease(serviceStatus)
+	service.Status = NewServiceStatusFromHelmRelease(serviceStatus)
 
 	return &service, nil
 }
@@ -129,7 +132,8 @@ func GetInternalRoutes(ctx context.Context, servicesGetter v1.ServiceInterface, 
 	return internalRoutes, nil
 }
 
-func (s *ServiceClient) Create(ctx context.Context, namespace, name string, wait bool, catalogService models.CatalogService) error {
+func (s *ServiceClient) Create(ctx context.Context, namespace, name string,
+	wait bool, settings models.ChartValueSettings, catalogService models.CatalogService) error {
 	// Resources, and names
 	//
 	// |Kind	|Name		|Notes			|
@@ -156,16 +160,52 @@ func (s *ServiceClient) Create(ctx context.Context, namespace, name string, wait
 		return errors.Wrap(err, "error creating service secret")
 	}
 
+	epinioValues, err := getEpinioValues(name, catalogService.Meta.Name)
+	if err != nil {
+		logger := tracelog.NewLogger().WithName("Create")
+		logger.Error(err, "getting epinio values")
+	}
+
+	// Ingest the service class YAML data into a proper values table
+	classValues, err := chartutil.ReadValues([]byte(catalogService.Values + epinioValues))
+	if err != nil {
+		return errors.Wrap(err, "failed to read service class values")
+	}
+
+	// Create proper values table from the --chart-value option data
+	userValues := chartutil.Values{}
+	for key, value := range settings {
+		err := strvals.ParseInto(key+"="+value, userValues)
+		if err != nil {
+			return errors.Wrap(err, "failed to parse `"+key+"="+value+"`")
+		}
+	}
+
+	// Merge class and user values, then serialize back to YAML.
+	//
+	// NOTE: Class values have priority over user values, under the assumption that these are
+	// needed to (1) have the service chart working with Epinio (*), or (2) are chosen by the
+	// operator for their environment.
+	//
+	// (*) See the `extraDeploy` setting found in dev service classes.
+	//
+	// ATTENTION: This priority order is reversed from what is said in the application CRD PR.
+	// FIX:       application CRD PR to match here.
+
+	values, err := chartutil.Values(chartutil.CoalesceTables(classValues, userValues)).YAML()
+	if err != nil {
+		return errors.Wrap(err, "failed to merge class and user values")
+	}
+
 	err = helm.DeployService(
-		requestctx.Logger(ctx),
+		ctx,
 		helm.ServiceParameters{
 			AppRef:     models.NewAppRef(name, namespace),
-			Context:    ctx,
 			Cluster:    s.kubeClient,
 			Chart:      catalogService.HelmChart,
 			Version:    catalogService.ChartVersion,
 			Repository: catalogService.HelmRepo.URL,
-			Values:     catalogService.Values,
+			Values:     values,
 			Wait:       wait,
 		})
 
@@ -183,7 +223,16 @@ func (s *ServiceClient) Create(ctx context.Context, namespace, name string, wait
 func (s *ServiceClient) Delete(ctx context.Context, namespace, name string) error {
 	service := serviceResourceName(name)
 
-	err := s.kubeClient.DeleteSecret(ctx, namespace, service)
+	err := helm.RemoveService(
+		requestctx.Logger(ctx),
+		s.kubeClient,
+		models.NewAppRef(name, namespace),
+	)
+	if err != nil {
+		return errors.Wrap(err, "error deleting service helm release")
+	}
+
+	err = s.kubeClient.DeleteSecret(ctx, namespace, service)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// COMPATIBILITY SUPPORT - Retry for (helm controller)-based service
@@ -192,11 +241,7 @@ func (s *ServiceClient) Delete(ctx context.Context, namespace, name string) erro
 		return errors.Wrap(err, "error deleting service secret")
 	}
 
-	err = helm.RemoveService(requestctx.Logger(ctx),
-		s.kubeClient,
-		models.NewAppRef(name, namespace))
-
-	return errors.Wrap(err, "error deleting service helm release")
+	return nil
 }
 
 // DeleteAll deletes all helmcharts installed on the specified namespace.
@@ -309,7 +354,7 @@ func (s *ServiceClient) list(ctx context.Context, namespace string) (models.Serv
 			}
 		}
 
-		service.Status = models.NewServiceStatusFromHelmRelease(serviceStatus)
+		service.Status = NewServiceStatusFromHelmRelease(serviceStatus)
 
 		serviceList = append(serviceList, service)
 	}
@@ -404,7 +449,7 @@ func (s *ServiceClient) GetForHelmController(ctx context.Context, namespace, nam
 		}
 	}
 
-	service.Status = models.NewServiceStatusFromHelmRelease(serviceStatus)
+	service.Status = NewServiceStatusFromHelmRelease(serviceStatus)
 
 	return &service, nil
 }
@@ -512,12 +557,23 @@ func (s *ServiceClient) listForHelmController(ctx context.Context, namespace str
 			}
 		}
 
-		service.Status = models.NewServiceStatusFromHelmRelease(serviceStatus)
+		service.Status = NewServiceStatusFromHelmRelease(serviceStatus)
 
 		serviceList = append(serviceList, service)
 	}
 
 	return serviceList, nil
+}
+
+func NewServiceStatusFromHelmRelease(status helm.ReleaseStatus) models.ServiceStatus {
+	switch status {
+	case helm.StatusReady:
+		return models.ServiceStatusDeployed
+	case helm.StatusNotReady:
+		return models.ServiceStatusNotReady
+	default:
+		return models.ServiceStatusUnknown
+	}
 }
 
 func convertUnstructuredListIntoHelmCharts(unstructuredList *unstructured.UnstructuredList) ([]helmapiv1.HelmChart, error) {
@@ -534,4 +590,29 @@ func convertUnstructuredListIntoHelmCharts(unstructuredList *unstructured.Unstru
 	}
 
 	return helmChartList, nil
+}
+
+func getEpinioValues(serviceName, catalogServiceName string) (string, error) {
+	//epinio:
+	//  serviceName: serviceName
+	//  catalogServiceName: catalogServiceName
+
+	type epinioValues struct {
+		ServiceName        string `yaml:"serviceName,omitempty"`
+		CatalogServiceName string `yaml:"catalogServiceName,omitempty"`
+	}
+
+	extraValues := epinioValues{
+		ServiceName:        serviceName,
+		CatalogServiceName: catalogServiceName,
+	}
+
+	yamlData, err := yaml.Marshal(&struct {
+		Epinio epinioValues `yaml:"epinio,omitempty"`
+	}{extraValues})
+	if err != nil {
+		return "", err
+	}
+
+	return "\n" + string(yamlData), nil
 }

@@ -19,11 +19,16 @@ import (
 
 	"github.com/epinio/epinio/internal/cli/settings"
 	"github.com/epinio/epinio/pkg/api/core/v1/client"
+	"github.com/epinio/epinio/pkg/api/core/v1/models"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
-func DescribeAppRestart() {
+var _ = Describe("Client Environments", func() {
+	Describe("Environment Errors", DescribeEnvironmentErrors)
+})
+
+func DescribeEnvironmentErrors() {
 
 	var epinioClient *client.Client
 	var statusCode int
@@ -38,20 +43,7 @@ func DescribeAppRestart() {
 		epinioClient = client.New(context.Background(), &settings.Settings{API: srv.URL})
 	})
 
-	When("app restart successfully", func() {
-
-		BeforeEach(func() {
-			statusCode = 200
-			responseBody = `{ "status": "OK" }`
-		})
-
-		It("returns no error", func() {
-			err := epinioClient.AppRestart("namespace-foo", "appname")
-			Expect(err).ToNot(HaveOccurred())
-		})
-	})
-
-	When("something bad happened", func() {
+	When("a 500 status code and a JSON error was returned", func() {
 
 		BeforeEach(func() {
 			statusCode = 500
@@ -66,9 +58,26 @@ func DescribeAppRestart() {
 				}`
 		})
 
-		It("it returns an error", func() {
-			err := epinioClient.AppRestart("namespace-foo", "appname")
-			Expect(err).To(HaveOccurred())
-		})
+		DescribeTable("the APIs are returning an error",
+			func(call func() (any, error)) {
+				_, err := call()
+				Expect(err).To(HaveOccurred())
+			},
+			Entry("env set", func() (any, error) {
+				return epinioClient.EnvSet(models.EnvVariableMap{}, "namespace", "appname")
+			}),
+			Entry("envs", func() (any, error) {
+				return epinioClient.EnvList("namespace", "appname")
+			}),
+			Entry("env show", func() (any, error) {
+				return epinioClient.EnvShow("namespace", "appname", "envname")
+			}),
+			Entry("env unset", func() (any, error) {
+				return epinioClient.EnvUnset("namespace", "appname", "envname")
+			}),
+			Entry("env match", func() (any, error) {
+				return epinioClient.EnvMatch("namespace", "appname", "envnameprefix")
+			}),
+		)
 	})
 }

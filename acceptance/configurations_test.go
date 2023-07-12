@@ -12,7 +12,10 @@
 package acceptance_test
 
 import (
+	"os"
+
 	"github.com/epinio/epinio/acceptance/helpers/catalog"
+	"github.com/epinio/epinio/acceptance/testenv"
 	"github.com/epinio/epinio/internal/names"
 
 	. "github.com/epinio/epinio/acceptance/helpers/matchers"
@@ -31,10 +34,10 @@ var _ = Describe("Configurations", LConfiguration, func() {
 		configurationName1 = catalog.NewConfigurationName()
 		configurationName2 = catalog.NewConfigurationName()
 		env.SetupAndTargetNamespace(namespace)
-	})
 
-	AfterEach(func() {
-		env.DeleteNamespace(namespace)
+		DeferCleanup(func() {
+			env.DeleteNamespace(namespace)
+		})
 	})
 
 	Describe("configuration list", func() {
@@ -42,11 +45,6 @@ var _ = Describe("Configurations", LConfiguration, func() {
 		BeforeEach(func() {
 			env.MakeConfiguration(configurationName1)
 			env.MakeConfiguration(configurationName2)
-		})
-
-		AfterEach(func() {
-			env.CleanupConfiguration(configurationName1)
-			env.CleanupConfiguration(configurationName2)
 		})
 
 		It("shows all created configurations", func() {
@@ -91,19 +89,11 @@ var _ = Describe("Configurations", LConfiguration, func() {
 			env.SetupAndTargetNamespace(namespace2)
 			env.MakeConfiguration(configuration1) // separate from namespace1.configuration1
 			env.MakeConfiguration(configuration2)
-		})
 
-		AfterEach(func() {
-			env.TargetNamespace(namespace2)
-			env.DeleteConfigurations(configuration1)
-			env.DeleteConfigurations(configuration2)
-
-			env.TargetNamespace(namespace1)
-			env.DeleteApp(app1)
-			env.DeleteConfigurations(configuration1)
-
-			env.DeleteNamespace(namespace1)
-			env.DeleteNamespace(namespace2)
+			DeferCleanup(func() {
+				env.DeleteNamespace(namespace1)
+				env.DeleteNamespace(namespace2)
+			})
 		})
 
 		It("lists all configurations belonging to all namespaces", func() {
@@ -127,12 +117,24 @@ var _ = Describe("Configurations", LConfiguration, func() {
 		// Note: Configurations provision instantly.
 		// No testing of wait/don't wait required.
 
-		AfterEach(func() {
-			env.CleanupConfiguration(configurationName1)
-		})
-
 		It("creates a configuration", func() {
 			env.MakeConfiguration(configurationName1)
+		})
+
+		It("creates an empty configuration", func() {
+			out, err := env.Epinio("", "configuration", "create", configurationName1)
+			Expect(err).ToNot(HaveOccurred(), out)
+
+			// Check presence
+			out, err = env.Epinio("", "configuration", "list")
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(MatchRegexp(configurationName1))
+
+			// No parameter
+			out, err = env.Epinio("", "configuration", "show", configurationName1)
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("Configuration Details"))
+			Expect(out).To(ContainSubstring("No parameters"))
 		})
 	})
 
@@ -141,6 +143,51 @@ var _ = Describe("Configurations", LConfiguration, func() {
 			out, err := env.Epinio("", "configuration", "create", "BOGUS", "dummy", "value")
 			Expect(err).To(HaveOccurred(), out)
 			Expect(out).To(ContainSubstring("name must consist of lower case alphanumeric"))
+		})
+
+		It("fails for missing arguments, not enough, no files", func() {
+			out, err := env.Epinio("", "configuration", "create")
+			Expect(err).To(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("Not enough arguments, expected name"))
+		})
+
+		It("fails for missing arguments, not enough, with files", func() {
+			out, err := env.Epinio("", "configuration", "create", "--from-file", "dummy")
+			Expect(err).To(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("Not enough arguments, expected name"))
+		})
+
+		It("fails for missing arguments, key without value", func() {
+			out, err := env.Epinio("", "configuration", "create", "foo", "a")
+			Expect(err).To(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("Last Key has no value"))
+		})
+
+		It("fails for a missing path", func() {
+			out, err := env.Epinio("", "configuration", "create", "foo", "--from-file", "MISSING")
+			Expect(err).To(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("filesystem error: open MISSING: no such file or directory"))
+		})
+
+		Describe("directory", func() {
+			var tmpDir string
+			var mkdirErr error
+
+			BeforeEach(func() {
+				tmpDir, mkdirErr = os.MkdirTemp("", "epinio-config")
+				Expect(mkdirErr).ToNot(HaveOccurred())
+
+				DeferCleanup(func() {
+					err := os.RemoveAll(tmpDir)
+					Expect(err).ToNot(HaveOccurred())
+				})
+			})
+
+			It("fails for a directory", func() {
+				out, err := env.Epinio("", "configuration", "create", "foo", "--from-file", tmpDir)
+				Expect(err).To(HaveOccurred(), out)
+				Expect(out).To(ContainSubstring("filesystem error: read %s: is a directory", tmpDir))
+			})
 		})
 	})
 
@@ -246,11 +293,6 @@ var _ = Describe("Configurations", LConfiguration, func() {
 			env.MakeContainerImageApp(appName, 1, containerImageURL)
 		})
 
-		AfterEach(func() {
-			env.CleanupApp(appName)
-			env.CleanupConfiguration(configurationName1)
-		})
-
 		It("binds a configuration to the application deployment", func() {
 			env.BindAppConfiguration(appName, configurationName1, namespace)
 		})
@@ -300,11 +342,6 @@ var _ = Describe("Configurations", LConfiguration, func() {
 			env.BindAppConfiguration(appName, configurationName1, namespace)
 		})
 
-		AfterEach(func() {
-			env.CleanupApp(appName)
-			env.CleanupConfiguration(configurationName1)
-		})
-
 		It("unbinds a configuration from the application deployment", func() {
 			env.UnbindAppConfiguration(appName, configurationName1, namespace)
 		})
@@ -345,15 +382,9 @@ var _ = Describe("Configurations", LConfiguration, func() {
 
 	Describe("configuration show", func() {
 
-		BeforeEach(func() {
-			env.MakeConfiguration(configurationName1)
-		})
-
-		AfterEach(func() {
-			env.CleanupConfiguration(configurationName1)
-		})
-
 		It("it shows configuration details", func() {
+			env.MakeConfiguration(configurationName1)
+
 			out, err := env.Epinio("", "configuration", "show", configurationName1)
 			Expect(err).ToNot(HaveOccurred(), out)
 			Expect(out).To(ContainSubstring("Configuration Details"))
@@ -366,7 +397,27 @@ var _ = Describe("Configurations", LConfiguration, func() {
 			)
 		})
 
+		It("reads from files, and truncates large configuration details", func() {
+			env.MakeConfigurationFromFiles(configurationName1, testenv.TestAssetPath("config.yaml"))
+
+			out, err := env.Epinio("", "configuration", "show", configurationName1)
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("Configuration Details"))
+
+			Expect(out).To(
+				HaveATable(
+					WithHeaders("PARAMETER", "VALUE", "ACCESS PATH"),
+					WithRow("file", `# Copyright © 2021 - 2023 SUS`, "\\/configurations\\/"+configurationName1+"\\/file"),
+					WithRow("", "[(]hiding 1758 additional bytes[)]", ""),
+				),
+			)
+		})
+
 		Context("command completion", func() {
+			BeforeEach(func() {
+				env.MakeConfiguration(configurationName1)
+			})
+
 			It("matches empty prefix", func() {
 				out, err := env.Epinio("", "__complete", "configuration", "show", "")
 				Expect(err).ToNot(HaveOccurred(), out)
@@ -408,12 +459,6 @@ var _ = Describe("Configurations", LConfiguration, func() {
 					WithRow(appName, WithDate(), "1/1", appName+".*", configurationName1, ""),
 				),
 			)
-		})
-
-		AfterEach(func() {
-			env.TargetNamespace(namespace)
-			env.DeleteApp(appName)
-			env.CleanupConfiguration(configurationName1)
 		})
 
 		It("it edits the configuration, and restarts the app", func() {
@@ -471,22 +516,23 @@ var _ = Describe("Configurations", LConfiguration, func() {
 			service = catalog.NewServiceName()
 
 			By("make service instance: " + service)
-			// catalogService.Meta.Name
-			out, err := env.Epinio("", "service", "create", "mysql-dev", service)
+			out, err := env.Epinio("", "service", "create", "postgresql-dev", service)
 			Expect(err).ToNot(HaveOccurred(), out)
 
 			By("wait for deployment")
 			Eventually(func() string {
 				out, _ := env.Epinio("", "service", "show", service)
 				return out
-			}, "2m", "5s").Should(HaveATable(WithRow("Status", "deployed")))
+			}, ServiceDeployTimeout, ServiceDeployPollingInterval).Should(
+				HaveATable(WithRow("Status", "deployed")),
+			)
 
 			appName = catalog.NewAppName()
 			By("make app: " + appName)
 			env.MakeContainerImageApp(appName, 1, containerImageURL)
 
 			chart = names.ServiceReleaseName(service)
-			config = chart + "-mysql"
+			config = chart + "-postgresql"
 
 			By("chart: " + chart)
 			By("config: " + config)
@@ -507,33 +553,10 @@ var _ = Describe("Configurations", LConfiguration, func() {
 			By("done before")
 		})
 
-		AfterEach(func() {
-			env.TargetNamespace(namespace)
-
-			By("remove app: " + appName)
-			env.DeleteApp(appName)
-
-			// The preceding removed the service/config binding as well, allowing us to
-			// remove the service and its configs without care.
-
-			By("remove service instance: " + service)
-
-			out, err := env.Epinio("", "service", "delete", service)
-			Expect(err).ToNot(HaveOccurred(), out)
-			Expect(out).To(ContainSubstring("Services Removed"))
-
-			Eventually(func() string {
-				out, _ := env.Epinio("", "service", "delete", service)
-				return out
-			}, "1m", "5s").Should(ContainSubstring("service '%s' does not exist", service))
-
-			By("done after")
-		})
-
 		It("doesn't unbind a service-owned configuration", func() {
 			out, err := env.Epinio("", "configuration", "unbind", config, appName)
 			Expect(err).To(HaveOccurred(), out)
-			Expect(out).To(ContainSubstring("Bad Request: Configuration '%s' belongs to service", config))
+			Expect(out).To(ContainSubstring("Configuration '%s' belongs to service", config))
 		})
 
 		It("doesn't delete a bound service-owned configuration", func() {
@@ -547,7 +570,6 @@ var _ = Describe("Configurations", LConfiguration, func() {
 
 			out, err := env.Epinio("", "service", "unbind", service, appName)
 			Expect(err).ToNot(HaveOccurred(), out)
-			Expect(out).ToNot(ContainSubstring("Available Commands:")) // Command should exist
 
 			By("wait for unbound")
 			Eventually(func() string {
@@ -558,6 +580,44 @@ var _ = Describe("Configurations", LConfiguration, func() {
 			out, err = env.Epinio("", "configuration", "delete", config)
 			Expect(err).To(HaveOccurred(), out)
 			Expect(out).To(ContainSubstring("Configuration '%s' belongs to service", config))
+		})
+
+		It("deletes a service-owned configuration after service deletion", func() {
+			By("unbind service: " + appName)
+
+			out, err := env.Epinio("", "service", "unbind", service, appName)
+			Expect(err).ToNot(HaveOccurred(), out)
+
+			By("wait for unbound")
+			Eventually(func() string {
+				out, _ := env.Epinio("", "app", "show", appName)
+				return out
+			}, "2m", "5s").ShouldNot(HaveATable(WithRow("Bound Configurations", config)))
+
+			out, err = env.Epinio("", "configuration", "delete", config)
+			Expect(err).To(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("Configuration '%s' belongs to service", config))
+
+			By("remove app: " + appName)
+			env.DeleteApp(appName)
+
+			// The preceding removed the service/config binding as well, allowing us to
+			// remove the service and its configs without care.
+
+			By("remove service instance: " + service)
+
+			out, err = env.Epinio("", "service", "delete", service)
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(ContainSubstring("Services Removed"))
+
+			Eventually(func() string {
+				out, _ := env.Epinio("", "service", "delete", service)
+				return out
+			}, "1m", "5s").Should(ContainSubstring("service '%s' does not exist", service))
+
+			By("done after")
+
+			env.CleanupConfiguration(configurationName1)
 		})
 	})
 

@@ -20,11 +20,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 
 	"github.com/epinio/epinio/helpers/kubernetes"
 	"github.com/epinio/epinio/internal/appchart"
+	"github.com/epinio/epinio/internal/cli/server/requestctx"
 	"github.com/epinio/epinio/internal/domain"
 	"github.com/epinio/epinio/internal/duration"
 	"github.com/epinio/epinio/internal/names"
@@ -34,15 +36,19 @@ import (
 	hc "github.com/mittwald/go-helm-client"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v2"
+	"helm.sh/helm/v3/pkg/kube"
 	helmrelease "helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/repo"
 	helmdriver "helm.sh/helm/v3/pkg/storage/driver"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/cli-runtime/pkg/resource"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 )
 
 type ServiceParameters struct {
 	models.AppRef                     // Service: name & namespace
-	Context       context.Context     // Operation context
 	Cluster       *kubernetes.Cluster // Cluster to talk to.
 	Chart         string              // Name of helm chart to deploy
 	Version       string              // Version of helm chart to deploy
@@ -70,7 +76,7 @@ type ChartParameters struct {
 	Routes         []string              // Desired application routes
 	Domains        domain.DomainMap      // Map of domains with secrets covering them
 	Start          *int64                // Nano-epoch of deployment. Optional. Used to force a restart, even when nothing else has changed.
-	Settings       models.AppSettings
+	Settings       models.ChartValueSettings
 }
 
 func Values(cluster *kubernetes.Cluster, logger logr.Logger, app models.AppRef) ([]byte, error) {
@@ -110,18 +116,11 @@ func RemoveService(logger logr.Logger, cluster *kubernetes.Cluster, app models.A
 	}
 
 	err = client.UninstallReleaseByName(names.ServiceReleaseName(app.Name))
-
-	// Ignore errors. The release may not be present. For example due to an aborted
-	// deployment. Note that a multitude of different errors was seen for essentially the same
-	// thing, depending on exact timing of deletion to partial creation. Just ignoring a
-	// specific one is fraught. Report, in case we were to generous and debugging is required.
-	if err != nil {
-		logger.Info("release deletion issue", "error", err)
-	}
-	return nil
+	return errors.Wrap(err, "deleting release")
 }
 
-func DeployService(logger logr.Logger, parameters ServiceParameters) error {
+func DeployService(ctx context.Context, parameters ServiceParameters) error {
+	logger := requestctx.Logger(ctx)
 	logger.Info("service helm setup", "parameters", parameters)
 
 	client, err := GetHelmClient(parameters.Cluster.RestConfig, logger, parameters.Namespace)
@@ -160,9 +159,38 @@ func DeployService(logger logr.Logger, parameters ServiceParameters) error {
 		ReuseValues: true,
 	}
 
-	_, err = client.InstallOrUpgradeChart(parameters.Context, &chartSpec, nil)
+	if !parameters.Wait {
+		// Note: We are backgrounding the action. The incoming context cannot be used, as it
+		// is linked to the request. We will get a `context canceled` error. To avoid this a
+		// background context is used instead.
+		go func() {
+			err = installOrUpgradeChartWithRetry(context.Background(), logger, client, &chartSpec)
+			if err != nil {
+				logger.Error(err, "installing or upgrading service ASYNC")
+			}
+		}()
+		return nil
+	}
 
-	return err
+	// Note: Steps 1: Retry only once!
+	err = installOrUpgradeChartWithRetry(ctx, logger, client, &chartSpec)
+	if err != nil {
+		return errors.Wrap(err, "installing or upgrading service SYNC")
+	}
+
+	// wait for the release to be in a ready state
+	timeout := duration.ToDeployment()
+	err = wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		releaseStatus, err := Status(ctx, logger, parameters.Cluster, parameters.Namespace, releaseName)
+		if releaseStatus == StatusUnknown || err != nil {
+			return false, err
+		}
+
+		// check readyness
+		return releaseStatus == StatusReady, nil
+	})
+
+	return errors.Wrap(err, "polling release status")
 }
 
 func Deploy(logger logr.Logger, parameters ChartParameters) error {
@@ -368,22 +396,78 @@ func Deploy(logger logr.Logger, parameters ChartParameters) error {
 	return err
 }
 
-func Status(ctx context.Context, logger logr.Logger, cluster *kubernetes.Cluster, namespace, releaseName string) (helmrelease.Status, error) {
-	client, err := GetHelmClient(cluster.RestConfig, logger, namespace)
+// Status is the status of a release
+type ReleaseStatus string
+
+const (
+	// StatusUnknown indicates that a release is in an uncertain state.
+	StatusUnknown ReleaseStatus = "unknown"
+	// StatusReady indicates that all the release's resources are in a ready state.
+	StatusReady ReleaseStatus = "ready"
+	// StatusNotReady indicates that not all the release's resources are in a ready state.
+	StatusNotReady ReleaseStatus = "not-ready"
+)
+
+// Status will check for the readyness of the release returning an internal status instead of
+// the Helm release status (https://github.com/helm/helm/blob/main/pkg/release/status.go).
+// Helm is not checking for the actual status of the release and even if the resources are still
+// in deployment they will be marked as "deployed"
+func Status(ctx context.Context, logger logr.Logger, cluster *kubernetes.Cluster, namespace, releaseName string) (ReleaseStatus, error) {
+	helmClient, err := GetHelmClient(cluster.RestConfig, logger, namespace)
 	if err != nil {
-		return "", err
+		return StatusUnknown, err
 	}
 
-	var r *helmrelease.Release
-	if r, err = client.GetRelease(releaseName); err != nil {
-		return "", err
+	releaseStatus, err := helmClient.Status(releaseName)
+	if err != nil {
+		return StatusUnknown, errors.Wrapf(err, "getting release status %s - %s", namespace, releaseName)
 	}
 
-	if r.Info == nil {
-		return "", errors.New("no status available")
+	resourceList := getResourceListFromRelease(releaseStatus)
+	logger.V(1).Info(fmt.Sprintf(
+		"found '%d' resources for release '%s' in namespace '%s'\n",
+		len(resourceList), releaseName, namespace),
+	)
+
+	checker := kube.NewReadyChecker(cluster.Kubectl, logger.Info, kube.PausedAsReady(true))
+	for _, v := range resourceList {
+		// IsReady checks if v is ready. It supports checking readiness for pods,
+		// deployments, persistent volume claims, services, daemon sets, custom
+		// resource definitions, stateful sets, replication controllers, and replica
+		// sets. All other resource kinds are always considered ready.
+		ready, err := checker.IsReady(ctx, v)
+
+		logger.V(1).Info(fmt.Sprintf("resource '%s' ready: '%t'\n", v.Name, ready))
+
+		if err != nil {
+			return StatusUnknown, errors.Wrapf(err, "checking readyness of resource '%s' of release '%s'", v.Name, releaseName)
+		}
+		if !ready {
+			return StatusNotReady, nil
+		}
 	}
 
-	return r.Info.Status, nil
+	return StatusReady, nil
+}
+
+// getResourcesFromRelease will look for Unstructured resources in the release and will return a list out of it
+func getResourceListFromRelease(release *helmrelease.Release) kube.ResourceList {
+	resourceList := make(kube.ResourceList, 0)
+
+	for _, objectList := range release.Info.Resources {
+		for _, obj := range objectList {
+			if v, ok := obj.(*unstructured.Unstructured); ok {
+				resourceList = append(resourceList, &resource.Info{
+					Object:    obj,
+					Name:      v.GetName(),
+					Namespace: v.GetNamespace(),
+				})
+			}
+
+		}
+	}
+
+	return resourceList
 }
 
 // syncNamespaceClientMap is holding a SynchronizedClient for each namespace
@@ -396,7 +480,7 @@ type SynchronizedClient struct {
 	helmClient hc.Client
 }
 
-func GetHelmClient(restConfig *rest.Config, logger logr.Logger, namespace string) (hc.Client, error) {
+func GetHelmClient(restConfig *rest.Config, logger logr.Logger, namespace string) (*SynchronizedClient, error) {
 	options := &hc.RestConfClientOptions{
 		RestConfig: restConfig,
 		Options: &hc.Options{
@@ -448,20 +532,37 @@ func cleanupReleaseIfNeeded(l logr.Logger, c hc.Client, name string) error {
 		return errors.Wrap(err, "getting the helm release")
 	}
 
-	if r.Info.Status != helmrelease.StatusDeployed {
-		l.Info("Will remove existing release with status: " + string(r.Info.Status))
-		err := c.UninstallRelease(&hc.ChartSpec{
-			ReleaseName: name, Wait: true,
-		})
-		if err != nil {
-			return errors.Wrapf(err, "uninstalling the release with status: %s", r.Info.Status)
+	if r.Info.Status == helmrelease.StatusDeployed {
+		return nil
+	}
+
+	l.Info("Will remove existing release with status: " + string(r.Info.Status))
+	err = c.UninstallRelease(&hc.ChartSpec{
+		ReleaseName: name,
+		Wait:        true,
+	})
+
+	if err != nil {
+		l.Error(err, fmt.Sprintf("uninstalling the release with status: %s", r.Info.Status))
+
+		// Sometimes we get an error but the release was uninstalled anyway.
+		// Check again if the release exists.
+		r, errGet := c.GetRelease(name)
+		if errGet != nil {
+			if errGet == helmdriver.ErrReleaseNotFound {
+				return nil
+			}
+			return errors.Wrap(errGet, "getting the helm release after uninstall")
 		}
+
+		// The release still exists, return the original error
+		return errors.Wrapf(err, "uninstalling the release with status: %s", r.Info.Status)
 	}
 	return nil
 }
 
 // validateField checks a single custom value against its declaration.
-func ValidateField(key, value string, spec models.AppChartSetting) (interface{}, error) {
+func ValidateField(key, value string, spec models.ChartSetting) (interface{}, error) {
 	if spec.Type == "string" {
 		if len(spec.Enum) > 0 {
 			for _, allowed := range spec.Enum {
@@ -518,4 +619,27 @@ func validateRange(v float64, key, value, min, max string) error {
 		}
 	}
 	return nil
+}
+
+func installOrUpgradeChartWithRetry(ctx context.Context, logger logr.Logger, client hc.Client,
+	chartSpec *hc.ChartSpec) error {
+
+	// This, the retry, should fix issue https://github.com/epinio/epinio/issues/2385
+
+	backoff := wait.Backoff{
+		Steps:    1, // Retry only once!
+		Duration: 10 * time.Millisecond,
+		Factor:   1.0,
+		Jitter:   0.1,
+	}
+
+	alwaysRetry := func(error) bool { return true }
+
+	return retry.OnError(backoff, alwaysRetry, func() error {
+		_, err := client.InstallOrUpgradeChart(ctx, chartSpec, nil)
+		if err != nil {
+			logger.Error(err, "installing or upgrading service, retry")
+		}
+		return err
+	})
 }

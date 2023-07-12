@@ -26,6 +26,7 @@ import (
 	"github.com/epinio/epinio/helpers"
 	"github.com/epinio/epinio/helpers/termui"
 	"github.com/epinio/epinio/internal/duration"
+	"github.com/epinio/epinio/pkg/api/core/v1/client"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
 )
 
@@ -117,13 +118,12 @@ func (c *EpinioClient) Push(ctx context.Context, params PushParams) error { // n
 	}, appRef.Namespace)
 	if err != nil {
 		// try to recover if it's a response type Conflict error and not a http connection error
-		rerr, ok := err.(interface{ StatusCode() int })
-
-		if !ok {
+		epinioAPIError := &client.APIError{}
+		if !errors.As(err, &epinioAPIError) {
 			return err
 		}
 
-		if rerr.StatusCode() != http.StatusConflict {
+		if epinioAPIError.StatusCode != http.StatusConflict {
 			return err
 		}
 
@@ -185,6 +185,10 @@ func (c *EpinioClient) Push(ctx context.Context, params PushParams) error { // n
 		}
 
 		blobUID = response.BlobUID
+		// if the server resolved the branch use that in the Git Origin
+		if response.Branch != "" {
+			params.Origin.Git.Branch = response.Branch
+		}
 
 	case models.OriginContainer:
 		// Nothing to upload (nor stage)
@@ -214,8 +218,9 @@ func (c *EpinioClient) Push(ctx context.Context, params PushParams) error { // n
 		c.stageLogs(appRef, stageResponse.Stage.ID)
 
 		details.Info("wait for job", "StageID", stageID)
+
 		// blocking function that wait until the staging is done
-		_, err := c.API.StagingComplete(appRef.Namespace, stageID)
+		err = stagingWithRetry(log.V(1), c.API, appRef.Namespace, stageID)
 		if err != nil {
 			c.ui.Note().Msgf(
 				"You can access the staging logs at any time, either in the UI or with the CLI using this command:\n\nepinio app logs --staging %s",

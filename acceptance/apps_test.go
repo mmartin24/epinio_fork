@@ -405,7 +405,7 @@ var _ = Describe("Apps", LApplication, func() {
 					out, err := env.Epinio("", "app", "update", appName,
 						"--app-chart", chartName)
 					Expect(err).To(HaveOccurred(), out)
-					Expect(out).To(ContainSubstring("Bad Request: unable to change app chart of active application"))
+					Expect(out).To(ContainSubstring("unable to change app chart of active application"))
 				})
 
 				When("no workload is present", func() {
@@ -1403,7 +1403,7 @@ configuration:
 			Expect(out).To(
 				HaveATable(
 					WithHeaders("NAME", "CREATED", "STATUS", "ROUTES", "CONFIGURATIONS", "STATUS DETAILS"),
-					WithRow(appName, WithDate(), "1/1", appName+".*", configurationName, ".*"),
+					WithRow(appName, WithDate(), "(1|2)/1", appName+".*", configurationName, ".*"),
 				),
 			)
 		})
@@ -1979,7 +1979,7 @@ userConfig:
 		})
 	}
 
-	var _ = Describe("Custom chart-value", func() {
+	var _ = Describe("Custom chart-value", Label("appListeningPort"), func() {
 		var (
 			namespace string
 			appName   string

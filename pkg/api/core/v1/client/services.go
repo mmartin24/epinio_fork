@@ -12,218 +12,117 @@
 package client
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
-
-	"github.com/pkg/errors"
 
 	api "github.com/epinio/epinio/internal/api/v1"
 	"github.com/epinio/epinio/pkg/api/core/v1/models"
 )
 
 func (c *Client) ServiceCatalog() (models.CatalogServices, error) {
-	data, err := c.get(api.Routes.Path("ServiceCatalog"))
-	if err != nil {
-		return nil, err
-	}
+	response := models.CatalogServices{}
+	endpoint := api.Routes.Path("ServiceCatalog")
 
-	var resp models.CatalogServices
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
 func (c *Client) ServiceCatalogShow(serviceName string) (*models.CatalogService, error) {
-	data, err := c.get(api.Routes.Path("ServiceCatalogShow", serviceName))
-	if err != nil {
-		return nil, err
-	}
+	response := &models.CatalogService{}
+	endpoint := api.Routes.Path("ServiceCatalogShow", serviceName)
 
-	var resp models.CatalogService
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return &resp, nil
+	return Get(c, endpoint, response)
 }
 
 // ServiceCatalogMatch returns all matching namespaces for the prefix
 func (c *Client) ServiceCatalogMatch(prefix string) (models.CatalogMatchResponse, error) {
-	resp := models.CatalogMatchResponse{}
+	response := models.CatalogMatchResponse{}
+	endpoint := api.Routes.Path("ServiceCatalogMatch", prefix)
 
-	data, err := c.get(api.Routes.Path("ServiceCatalogMatch", prefix))
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
 func (c *Client) AllServices() (models.ServiceList, error) {
-	data, err := c.get(api.Routes.Path("AllServices"))
-	if err != nil {
-		return nil, err
-	}
+	response := models.ServiceList{}
+	endpoint := api.Routes.Path("AllServices")
 
-	var resp models.ServiceList
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, err
+	return Get(c, endpoint, response)
 }
 
-func (c *Client) ServiceCreate(req *models.ServiceCreateRequest, namespace string) error {
-	b, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
+func (c *Client) ServiceCreate(request models.ServiceCreateRequest, namespace string) (models.Response, error) {
+	response := models.Response{}
+	endpoint := api.Routes.Path("ServiceCreate", namespace)
 
-	_, err = c.post(api.Routes.Path("ServiceCreate", namespace), string(b))
-	return err
+	return Post(c, endpoint, request, response)
 }
 
-func (c *Client) ServiceShow(req *models.ServiceShowRequest, namespace string) (*models.Service, error) {
-	data, err := c.get(api.Routes.Path("ServiceShow", namespace, req.Name))
-	if err != nil {
-		return nil, err
-	}
+func (c *Client) ServiceShow(namespace, name string) (*models.Service, error) {
+	response := &models.Service{}
+	endpoint := api.Routes.Path("ServiceShow", namespace, name)
 
-	var resp models.Service
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return &resp, nil
+	return Get(c, endpoint, response)
 }
 
 // ServiceMatch returns all matching services for the prefix
 func (c *Client) ServiceMatch(namespace, prefix string) (models.ServiceMatchResponse, error) {
-	resp := models.ServiceMatchResponse{}
+	response := models.ServiceMatchResponse{}
+	endpoint := api.Routes.Path("ServiceMatch", namespace, prefix)
 
-	data, err := c.get(api.Routes.Path("ServiceMatch", namespace, prefix))
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
-func (c *Client) ServiceDelete(req models.ServiceDeleteRequest, namespace string, names []string, f ErrorFunc) (models.ServiceDeleteResponse, error) {
+func (c *Client) ServiceDelete(request models.ServiceDeleteRequest, namespace string, names []string) (models.ServiceDeleteResponse, error) {
+	response := models.ServiceDeleteResponse{}
 
-	resp := models.ServiceDeleteResponse{}
-
-	b, err := json.Marshal(req)
-	if err != nil {
-		return resp, nil
+	queryParams := url.Values{}
+	for _, serviceName := range names {
+		queryParams.Add("services[]", serviceName)
 	}
 
-	URL := constructServiceBatchDeleteURL(namespace, names)
+	endpoint := fmt.Sprintf(
+		"%s?%s",
+		api.Routes.Path("ServiceBatchDelete", namespace),
+		queryParams.Encode(),
+	)
 
-	data, err := c.doWithCustomErrorHandling(URL, "DELETE", string(b), f)
-	if err != nil {
-		if err.Error() != "Bad Request" {
-			return resp, err
-		}
-		return resp, nil
-	}
-
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, &resp); err != nil {
-			return resp, errors.Wrap(err, "response body is not JSON")
-		}
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Delete(c, endpoint, request, response)
 }
 
-func (c *Client) ServiceBind(req *models.ServiceBindRequest, namespace, name string) error {
-	b, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
+func (c *Client) ServiceBind(request models.ServiceBindRequest, namespace, name string) (models.Response, error) {
+	response := models.Response{}
+	endpoint := api.Routes.Path("ServiceBind", namespace, name)
 
-	_, err = c.post(api.Routes.Path("ServiceBind", namespace, name), string(b))
-	return err
+	return Post(c, endpoint, request, response)
 }
 
-func (c *Client) ServiceUnbind(req *models.ServiceUnbindRequest, namespace, name string) error {
-	b, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
+func (c *Client) ServiceUnbind(request models.ServiceUnbindRequest, namespace, name string) (models.Response, error) {
+	response := models.Response{}
+	endpoint := api.Routes.Path("ServiceUnbind", namespace, name)
 
-	_, err = c.post(api.Routes.Path("ServiceUnbind", namespace, name), string(b))
-	return err
+	return Post(c, endpoint, request, response)
 }
 
 func (c *Client) ServiceList(namespace string) (models.ServiceList, error) {
-	data, err := c.get(api.Routes.Path("ServiceList", namespace))
-	if err != nil {
-		return nil, err
-	}
+	response := models.ServiceList{}
+	endpoint := api.Routes.Path("ServiceList", namespace)
 
-	var resp models.ServiceList
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, err
+	return Get(c, endpoint, response)
 }
 
 // ServiceApps lists a map from services to bound apps, for the namespace
 func (c *Client) ServiceApps(namespace string) (models.ServiceAppsResponse, error) {
-	resp := models.ServiceAppsResponse{}
+	response := models.ServiceAppsResponse{}
+	endpoint := api.Routes.Path("ServiceApps", namespace)
 
-	data, err := c.get(api.Routes.Path("ServiceApps", namespace))
-	if err != nil {
-		return resp, err
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return resp, errors.Wrap(err, "response body is not JSON")
-	}
-
-	c.log.V(1).Info("response decoded", "response", resp)
-
-	return resp, nil
+	return Get(c, endpoint, response)
 }
 
-func constructServiceBatchDeleteURL(namespace string, names []string) string {
-	q := url.Values{}
-	for _, c := range names {
-		q.Add("services[]", c)
+// ServicePortForward will forward the local traffic to a remote app
+func (c *Client) ServicePortForward(namespace string, serviceName string, opts *PortForwardOpts) error {
+	endpoint := fmt.Sprintf("%s%s/%s", c.Settings.API, api.WsRoot, api.WsRoutes.Path("ServicePortForward", namespace, serviceName))
+
+	if fw, err := NewServicePortForwarder(c, endpoint, opts.Address, opts.Ports, opts.StopChannel); err != nil {
+		return err
+	} else {
+		return fw.ForwardPorts()
 	}
-	URLParams := q.Encode()
-
-	URL := api.Routes.Path("ServiceBatchDelete", namespace)
-
-	return fmt.Sprintf("%s?%s", URL, URLParams)
 }

@@ -61,7 +61,7 @@ type APIClient interface {
 	AppRunning(app models.AppRef) (models.Response, error)
 	AppExec(ctx context.Context, namespace string, appName, instance string, tty kubectlterm.TTY) error
 	AppPortForward(namespace string, appName, instance string, opts *epinioapi.PortForwardOpts) error
-	AppRestart(namespace string, appName string) error
+	AppRestart(namespace string, appName string) (models.Response, error)
 	AppGetPart(namespace, appName, part, destinationPath string) error
 	AppMatch(namespace, prefix string) (models.AppMatchResponse, error)
 	AppValidateCV(namespace string, name string) (models.Response, error)
@@ -88,7 +88,7 @@ type APIClient interface {
 	AllConfigurations() (models.ConfigurationResponseList, error)
 	ConfigurationBindingCreate(req models.BindRequest, namespace string, appName string) (models.BindResponse, error)
 	ConfigurationBindingDelete(namespace string, appName string, configurationName string) (models.Response, error)
-	ConfigurationDelete(req models.ConfigurationDeleteRequest, namespace string, names []string, f epinioapi.ErrorFunc) (models.ConfigurationDeleteResponse, error)
+	ConfigurationDelete(req models.ConfigurationDeleteRequest, namespace string, names []string) (models.ConfigurationDeleteResponse, error)
 	ConfigurationCreate(req models.ConfigurationCreateRequest, namespace string) (models.Response, error)
 	ConfigurationUpdate(req models.ConfigurationUpdateRequest, namespace, name string) (models.Response, error)
 	ConfigurationShow(namespace string, name string) (models.ConfigurationResponse, error)
@@ -101,13 +101,14 @@ type APIClient interface {
 	ServiceCatalogMatch(prefix string) (models.CatalogMatchResponse, error)
 
 	AllServices() (models.ServiceList, error)
-	ServiceShow(req *models.ServiceShowRequest, namespace string) (*models.Service, error)
-	ServiceCreate(req *models.ServiceCreateRequest, namespace string) error
-	ServiceBind(req *models.ServiceBindRequest, namespace, name string) error
-	ServiceUnbind(req *models.ServiceUnbindRequest, namespace, name string) error
-	ServiceDelete(req models.ServiceDeleteRequest, namespace string, names []string, f epinioapi.ErrorFunc) (models.ServiceDeleteResponse, error)
+	ServiceShow(namespace, name string) (*models.Service, error)
+	ServiceCreate(req models.ServiceCreateRequest, namespace string) (models.Response, error)
+	ServiceBind(req models.ServiceBindRequest, namespace, name string) (models.Response, error)
+	ServiceUnbind(req models.ServiceUnbindRequest, namespace, name string) (models.Response, error)
+	ServiceDelete(req models.ServiceDeleteRequest, namespace string, names []string) (models.ServiceDeleteResponse, error)
 	ServiceList(namespace string) (models.ServiceList, error)
 	ServiceMatch(namespace, prefix string) (models.ServiceMatchResponse, error)
+	ServicePortForward(namespace string, serviceName string, opts *epinioapi.PortForwardOpts) error
 
 	// application charts
 	ChartList() ([]models.AppChart, error)
@@ -116,6 +117,9 @@ type APIClient interface {
 
 	DisableVersionWarning()
 	VersionWarningEnabled() bool
+
+	SetHeader(k, v string)
+	Headers() map[string]string
 }
 
 func New(ctx context.Context) (*EpinioClient, error) {
